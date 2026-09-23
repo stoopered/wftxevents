@@ -34,12 +34,12 @@ data "aws_iam_policy_document" "github_actions_trust" {
       values   = ["sts.amazonaws.com"]
     }
 
-    # Restrict to this repo, any branch/workflow -- tighten to
-    # repo:stoopered/wftxevents:ref:refs/heads/main if you want main-only.
+    # Scoped to main only -- these workflows are manual (workflow_dispatch)
+    # runs off main, not PR branches, so no wildcard is needed here.
     condition {
-      test     = "StringLike"
+      test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:stoopered/wftxevents:*"]
+      values   = ["repo:stoopered/wftxevents:ref:refs/heads/main"]
     }
   }
 }
