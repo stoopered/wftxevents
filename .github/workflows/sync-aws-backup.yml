@@ -2,12 +2,17 @@ name: Sync site to AWS backup (S3 + CloudFront)
 
 # Manual only -- the AWS stack is a cold standby, not the live site.
 # Run this after `terraform apply` in terraform/aws-backup has created the
-# bucket/distribution, and whenever you want the backup's content refreshed.
+# bucket/distribution/IAM role, and whenever you want the backup refreshed.
+#
+# No AWS keys are stored anywhere: this authenticates via GitHub's OIDC
+# token exchanged for short-lived credentials on the IAM role that
+# terraform/aws-backup/github-oidc.tf creates.
 on:
   workflow_dispatch:
 
 permissions:
   contents: read
+  id-token: write
 
 jobs:
   sync:
@@ -16,16 +21,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: us-east-1
 
       - name: Sync to S3
         run: |
-          aws s3 sync . "s3://${{ secrets.AWS_BACKUP_BUCKET }}" \
+          aws s3 sync . "s3://${{ vars.AWS_BACKUP_BUCKET }}" \
             --delete \
             --exclude ".git/*" \
             --exclude ".github/*" \
@@ -34,5 +38,5 @@ jobs:
       - name: Invalidate CloudFront cache
         run: |
           aws cloudfront create-invalidation \
-            --distribution-id "${{ secrets.AWS_CLOUDFRONT_DISTRIBUTION_ID }}" \
+            --distribution-id "${{ vars.AWS_CLOUDFRONT_DISTRIBUTION_ID }}" \
             --paths "/*"

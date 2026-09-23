@@ -1,0 +1,64 @@
+name: Terraform - Namecheap DNS
+
+# Manual only -- DNS changes are rare and deliberate. Secrets come from repo
+# secrets (Settings > Secrets and variables > Actions), never from a local
+# tfvars file. State is cached between runs since this stack is small and its
+# only resource (namecheap_domain_records, mode=OVERWRITE) is idempotent --
+# a cache miss just reapplies the same desired state, it doesn't duplicate
+# anything.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Apply the plan (unchecked = plan only)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+env:
+  TF_VAR_namecheap_username: ${{ secrets.NAMECHEAP_USERNAME }}
+  TF_VAR_namecheap_api_user: ${{ secrets.NAMECHEAP_USERNAME }}
+  TF_VAR_namecheap_api_key: ${{ secrets.NAMECHEAP_API_KEY }}
+  TF_VAR_namecheap_client_ip: ${{ secrets.NAMECHEAP_CLIENT_IP }}
+
+jobs:
+  terraform:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform/dns
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.16.3"
+
+      - name: Restore state cache
+        uses: actions/cache@v4
+        with:
+          path: terraform/dns/terraform.tfstate
+          key: tfstate-dns-${{ github.run_id }}
+          restore-keys: |
+            tfstate-dns-
+
+      - name: Terraform init
+        run: terraform init
+
+      - name: Terraform plan
+        run: terraform plan -out=tfplan
+
+      - name: Terraform apply
+        if: ${{ inputs.apply }}
+        run: terraform apply -auto-approve tfplan
+
+      - name: Save state cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: terraform/dns/terraform.tfstate
+          key: tfstate-dns-${{ github.run_id }}

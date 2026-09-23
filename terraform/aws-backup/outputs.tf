@@ -2,6 +2,15 @@ output "bucket_name" {
   value = aws_s3_bucket.site.id
 }
 
+output "cloudfront_distribution_id" {
+  value = aws_cloudfront_distribution.site.id
+}
+
+output "github_actions_role_arn" {
+  description = "Set as the AWS_DEPLOY_ROLE_ARN repo VARIABLE (not secret -- ARNs aren't sensitive) for sync-aws-backup.yml"
+  value       = aws_iam_role.github_actions_deploy.arn
+}
+
 output "cloudfront_domain_name" {
   description = "Backup site URL -- works immediately, no DNS changes needed"
   value       = "https://${aws_cloudfront_distribution.site.domain_name}"

@@ -31,17 +31,27 @@ Namecheap's API requires your account to be API-eligible (20+ domains, or $50+ s
 2 years, or a whitelisted IP + manual approval on a new account) -- check Profile > Tools > API
 Access in the Namecheap dashboard first.
 
+Secrets live in **GitHub Actions repo secrets**, not a local tfvars file (already set:
+`NAMECHEAP_USERNAME`, `NAMECHEAP_API_KEY`, `NAMECHEAP_CLIENT_IP`). `terraform.tfvars.example`
+documents the variable names only -- don't fill it with real values and don't create a real
+`terraform.tfvars`.
+
+Apply/plan runs through the **Terraform - Namecheap DNS** workflow:
 ```bash
-cd terraform/dns
-cp terraform.tfvars.example terraform.tfvars   # fill in real values, never commit this file
-terraform init
-terraform plan
-terraform apply
+gh workflow run terraform-dns.yml            # plan only
+gh workflow run terraform-dns.yml -f apply=true   # plan + apply
 ```
+State is cached between runs (`actions/cache`). If the cache is ever missed, re-running is safe --
+the only resource is `namecheap_domain_records` with `mode = "OVERWRITE"`, which is idempotent by
+domain, not by Terraform's tracked ID.
 
 This sets 4 apex A records to GitHub Pages' IPs and a `www` CNAME. `mode = "OVERWRITE"` replaces
 *all* DNS records on the domain -- if you add email later, add those records to `dns.tf`, don't
 add them by hand in the UI (next apply wipes them).
+
+If you need to run it locally instead: export `TF_VAR_namecheap_username`,
+`TF_VAR_namecheap_api_user`, `TF_VAR_namecheap_api_key`, `TF_VAR_namecheap_client_ip` as shell env
+vars for that session only -- never write them to a file.
 
 After DNS propagates, turn on "Enforce HTTPS" in GitHub Settings > Pages once GitHub shows the
 domain as verified.
@@ -63,9 +73,21 @@ no DNS or cert validation needed to confirm it works. To actually attach wftxeve
 4. Set `enable_custom_domain = true` and `terraform apply` again.
 5. Only repoint the live A/CNAME records at CloudFront if GitHub Pages is actually down.
 
-Add repo secrets `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_BACKUP_BUCKET`,
-`AWS_CLOUDFRONT_DISTRIBUTION_ID` (from the `terraform output`) to enable the manual
-`sync-aws-backup.yml` workflow.
+**No AWS keys are stored anywhere.** `github-oidc.tf` creates an IAM OIDC provider + role that
+GitHub Actions assumes for short-lived credentials at run time (`sync-aws-backup.yml` uses this).
+That's a stronger position than putting AWS keys in Secrets Manager -- Secrets Manager itself
+would need a bootstrap AWS identity to read from, so it can't be the first credential in the
+chain. If this project ever needs an actual secret *value* on the AWS side (an API key, a DB
+password), Secrets Manager is where it goes, with the role above granted read access to it --
+there's nothing to store there today since this stack is fully static.
+
+After `terraform apply`, set these as repo **variables** (not secrets -- none of them are
+sensitive) so `sync-aws-backup.yml` can use them:
+```bash
+gh variable set AWS_DEPLOY_ROLE_ARN --body "$(terraform output -raw github_actions_role_arn)"
+gh variable set AWS_BACKUP_BUCKET --body "$(terraform output -raw bucket_name)"
+gh variable set AWS_CLOUDFRONT_DISTRIBUTION_ID --body "$(terraform output -raw cloudfront_distribution_id)"
+```
 
 Cost: low single-digit dollars/month at most for a low-traffic seasonal site (S3 storage pennies,
 CloudFront's free tier covers 1TB/month transfer for the first 12 months on a new AWS account).
