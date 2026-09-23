@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WFTX Events | Zombie Maze Halloween Attraction</title>
+<meta name="description" content="Survive the Zombie Maze this Halloween. Timed tickets, Sunday guided tours, and a cornfield full of the infected.">
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Creepster&family=Special+Elite&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap nav-inner">
+    <a class="logo" href="#home">WFTX <span>EVENTS</span></a>
+    <button class="nav-toggle" id="navToggle" aria-label="Toggle menu" aria-expanded="false">
+      <span></span><span></span><span></span>
+    </button>
+    <nav class="site-nav" id="siteNav">
+      <a href="#about">The Maze</a>
+      <a href="#details">Details</a>
+      <a href="#book">Sunday Tours</a>
+      <a href="#faq">FAQ</a>
+      <a href="#contact">Contact</a>
+    </nav>
+  </div>
+</header>
+
+<section class="hero" id="home">
+  <div class="fog"></div>
+  <div class="wrap hero-inner">
+    <p class="eyebrow">West Fort Worth &middot; TX</p>
+    <h1>ZOMBIE MAZE</h1>
+    <p class="tagline">The cornfield is infected. You have one flashlight and no backup. Good luck.</p>
+    <p class="event-dates">Weekends in October &middot; <strong data-fill="dates">[EVENT DATES]</strong></p>
+    <div class="hero-cta">
+      <a class="btn btn-primary" href="#book">Book Sunday Tour</a>
+      <a class="btn btn-ghost" href="#details">Event Details</a>
+    </div>
+  </div>
+</section>
+
+<section class="about" id="about">
+  <div class="wrap">
+    <h2>The Maze</h2>
+    <p>What started as a routine harvest went wrong. Something got into the corn, and it's spreading. Walk the maze,
+      keep your group together, and follow the flashlight beam &mdash; because whatever is out there in the stalks
+      is faster than you think.</p>
+    <p>Live actors, fog, and a maze layout that changes every night. Not recommended for anyone who scares easily or
+      cannot walk on uneven ground in the dark.</p>
+  </div>
+</section>
+
+<section class="details" id="details">
+  <div class="wrap">
+    <h2>Details</h2>
+    <div class="detail-grid">
+      <div class="detail-card">
+        <h3>Dates &amp; Hours</h3>
+        <p data-fill="hours">[Fri/Sat nights, 7&ndash;11 PM &middot; Sundays 5&ndash;9 PM]</p>
+      </div>
+      <div class="detail-card">
+        <h3>Location</h3>
+        <p data-fill="address">[MAZE ADDRESS, FORT WORTH, TX]</p>
+      </div>
+      <div class="detail-card">
+        <h3>Tickets</h3>
+        <p data-fill="price">[$PRICE per person &middot; group rates available]</p>
+      </div>
+      <div class="detail-card">
+        <h3>Know Before You Go</h3>
+        <p>Closed-toe shoes required. Uneven dirt paths, fog, and strobe effects. Not recommended for guests under
+          10 or anyone with mobility limitations, seizure disorders, or heart conditions.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="book" id="book">
+  <div class="wrap">
+    <h2>Sunday Guided Tours</h2>
+    <p>Sundays are quieter, lower-scare guided walkthroughs &mdash; good for younger guests or anyone who wants the
+      maze without the full nighttime chaos. Pick a time slot below.</p>
+
+    <!-- Calendly inline widget. Replace data-url with your real event link. -->
+    <div class="calendly-inline-widget" data-url="https://calendly.com/YOUR-CALENDLY-USERNAME/sunday-zombie-maze-tour" style="min-width:320px;height:700px;"></div>
+    <script type="text/javascript" src="https://assets.calendly.com/assets/external/widget.js" async></script>
+
+    <p class="book-note">Only Sunday slots are shown because the Calendly event's own availability is restricted to
+      Sundays &mdash; configure that in your Calendly account, not here.</p>
+  </div>
+</section>
+
+<section class="faq" id="faq">
+  <div class="wrap">
+    <h2>FAQ</h2>
+    <details>
+      <summary>How long does the maze take?</summary>
+      <p data-fill="duration">[Roughly 20&ndash;30 minutes depending on group size and how often you scream.]</p>
+    </details>
+    <details>
+      <summary>Is it good for kids?</summary>
+      <p>The Friday/Saturday night maze is intense and not recommended for young children. Sunday guided tours are
+        lower-scare and more kid-friendly.</p>
+    </details>
+    <details>
+      <summary>Do you take walk-ups?</summary>
+      <p data-fill="walkups">[Yes/No &mdash; fill in your actual policy here.]</p>
+    </details>
+    <details>
+      <summary>Is there parking?</summary>
+      <p data-fill="parking">[Describe on-site parking here.]</p>
+    </details>
+  </div>
+</section>
+
+<footer id="contact">
+  <div class="wrap footer-inner">
+    <p class="logo">WFTX <span>EVENTS</span></p>
+    <p data-fill="contact-email">[contact@wftxevents.com]</p>
+    <p class="fine-print">&copy; <span id="year"></span> WFTX Events. Survive if you can.</p>
+  </div>
+</footer>
+
+<script src="js/main.js"></script>
+</body>
+</html>
