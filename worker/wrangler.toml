@@ -1,0 +1,13 @@
+name = "wftxevents-booking"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+workers_dev = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "wftxevents-bookings"
+database_id = "cdc58e56-4a5d-4f49-9ff8-adb22014ed4e"
+migrations_dir = "migrations"
+
+[observability]
+enabled = true
