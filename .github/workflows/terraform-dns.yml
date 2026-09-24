@@ -6,6 +6,10 @@ name: Terraform - Namecheap DNS
 # only resource (namecheap_domain_records, mode=OVERWRITE) is idempotent --
 # a cache miss just reapplies the same desired state, it doesn't duplicate
 # anything.
+#
+# Runs on a self-hosted runner (see ops/self-hosted-runner/), not
+# GitHub-hosted, because Namecheap's API only accepts calls from whitelisted
+# IPs and GitHub-hosted runners don't have a static one.
 on:
   workflow_dispatch:
     inputs:
@@ -25,18 +29,13 @@ env:
 
 jobs:
   terraform:
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, wftx-dns]
     defaults:
       run:
         working-directory: terraform/dns
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: "1.16.3"
 
       - name: Restore state cache
         uses: actions/cache@v4
