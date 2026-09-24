@@ -10,3 +10,5 @@ crash.*.log
 
 # OS
 .DS_Store
+*.tfplan
+tfplan
