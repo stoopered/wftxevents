@@ -18,11 +18,18 @@
   input, button { font: inherit; padding: 8px 12px; background: #0f0c08; color: var(--text); border: 1px solid var(--border); border-radius: 4px; }
   button { cursor: pointer; }
   button.danger { border-color: var(--red); color: var(--red); }
+  button.approve { border-color: var(--glow); color: var(--glow); }
+  td.actions { white-space: nowrap; }
+  td.actions button + button { margin-left: 6px; }
+  .badge { font-size: 0.75rem; padding: 2px 6px; border-radius: 3px; border: 1px solid var(--border); }
+  .badge.pending { color: #ffb020; border-color: #ffb020; }
+  .badge.confirmed { color: var(--glow); border-color: var(--glow); }
+  tr.pending td { background: rgba(255, 176, 32, 0.06); }
   .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 16px; }
   table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
   th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
   th { color: var(--dim); font-weight: normal; }
-  tr.cancelled td { color: var(--dim); text-decoration: line-through; }
+  tr.cancelled td, tr.declined td { color: var(--dim); text-decoration: line-through; }
   .msg { color: var(--red); min-height: 1.4em; }
   .summary { color: var(--dim); font-size: 0.9rem; }
   @media (max-width: 720px) { th:nth-child(6), td:nth-child(6) { display: none; } }
@@ -73,34 +80,53 @@ async function load() {
   const byDate = {};
   for (const b of bookings) (byDate[b.date] ||= []).push(b);
 
+  const pendingTotal = bookings.filter((b) => b.status === 'pending').length;
+  out.insertAdjacentHTML('beforeend', `<p class="summary">${pendingTotal} request${pendingTotal === 1 ? '' : 's'} waiting for approval. Only confirmed bookings hold a time slot.</p>`);
+
+  const actionsFor = (b) => {
+    const id = esc(b.id);
+    if (b.status === 'pending') return `<button class="approve" data-act="approve" data-id="${id}">Approve</button><button class="danger" data-act="decline" data-id="${id}">Decline</button>`;
+    if (b.status === 'confirmed') return `<button class="danger" data-act="cancel" data-id="${id}">Cancel</button>`;
+    return esc(b.status);
+  };
+
   for (const [date, list] of Object.entries(byDate)) {
     const confirmed = list.filter((b) => b.status === 'confirmed');
+    const pending = list.filter((b) => b.status === 'pending').length;
     const people = confirmed.reduce((n, b) => n + b.party, 0);
     const kids = confirmed.reduce((n, b) => n + b.kids, 0);
     out.insertAdjacentHTML('beforeend', `
       <h2>${esc(list[0].dateLabel)}</h2>
-      <p class="summary">${confirmed.length} group${confirmed.length === 1 ? '' : 's'} · ${people} people · ${kids} glow band${kids === 1 ? '' : 's'}</p>
+      <p class="summary">Confirmed: ${confirmed.length} group${confirmed.length === 1 ? '' : 's'} · ${people} people · ${kids} glow band${kids === 1 ? '' : 's'}${pending ? ` · <strong>${pending} pending</strong>` : ''}</p>
       <table>
-        <tr><th>Time</th><th>Code</th><th>Name</th><th>Group</th><th>Contact</th><th>Notes</th><th></th></tr>
+        <tr><th>Time</th><th>Status</th><th>Name</th><th>Group</th><th>Contact</th><th>Notes</th><th></th></tr>
         ${list.map((b) => `
           <tr class="${esc(b.status)}">
             <td>${esc(b.timeLabel)}</td>
-            <td>${esc(b.code)}</td>
+            <td><span class="badge ${esc(b.status)}">${esc(b.status)}</span><br>${esc(b.code)}</td>
             <td>${esc(b.name)}</td>
             <td>${b.party}${b.kids ? ` (${b.kids} kids)` : ''}</td>
-            <td>${esc(b.phone)}<br><a href="mailto:${esc(b.email)}">${esc(b.email)}</a></td>
+            <td><a href="tel:${esc(b.phone)}">${esc(b.phone)}</a><br><a href="mailto:${esc(b.email)}">${esc(b.email)}</a></td>
             <td>${esc(b.notes)}</td>
-            <td>${b.status === 'confirmed' ? `<button class="danger" data-id="${esc(b.id)}">Cancel</button>` : 'cancelled'}</td>
+            <td class="actions">${actionsFor(b)}</td>
           </tr>`).join('')}
       </table>`);
   }
 }
 
+const ACTIONS = {
+  approve: { confirm: 'Approve this booking? It will hold the time slot and email the guest.', path: (id) => `/api/admin/bookings/${id}/approve`, method: 'POST' },
+  decline: { confirm: 'Decline this request? The guest will be emailed.', path: (id) => `/api/admin/bookings/${id}/decline`, method: 'POST' },
+  cancel: { confirm: 'Cancel this confirmed booking? The guest will be emailed.', path: (id) => `/api/admin/bookings/${id}`, method: 'DELETE' },
+};
+
 out.addEventListener('click', async (e) => {
-  const id = e.target.dataset.id;
-  if (!id || !confirm('Cancel this booking?')) return;
-  try { await api('/api/admin/bookings/' + id, { method: 'DELETE' }); load(); }
-  catch (err) { msg.textContent = err.message; }
+  const { id, act } = e.target.dataset;
+  const a = ACTIONS[act];
+  if (!id || !a || !confirm(a.confirm)) return;
+  e.target.disabled = true;
+  try { await api(a.path(id), { method: a.method }); load(); }
+  catch (err) { msg.textContent = err.message; e.target.disabled = false; }
 });
 
 document.getElementById('load').addEventListener('click', load);

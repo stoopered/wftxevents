@@ -113,7 +113,7 @@ form.addEventListener('submit', async (e) => {
   if (!form.reportValidity()) return;
 
   bookBtn.disabled = true;
-  bookBtn.textContent = 'Holding…';
+  bookBtn.textContent = 'Sending…';
   try {
     const c = await api('/api/bookings', { method: 'POST', body: JSON.stringify(payload) });
     document.getElementById('confCode').textContent = c.code;
@@ -125,10 +125,10 @@ form.addEventListener('submit', async (e) => {
     confirmation.scrollIntoView({ behavior: 'smooth', block: 'center' });
   } catch (err) {
     setMsg(err.message);
-    if (/filled up/i.test(err.message)) loadSlots(dateSelect.value);
+    if (/full/i.test(err.message)) loadSlots(dateSelect.value);
   } finally {
     bookBtn.disabled = false;
-    bookBtn.textContent = 'Hold My Slot';
+    bookBtn.textContent = 'Request This Slot';
   }
 });
 

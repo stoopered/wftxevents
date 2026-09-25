@@ -10,6 +10,8 @@ const CONFIG = {
   capacityPerSlot: 2, // groups per slot
   maxParty: 10,
   maxBookingsPerIpPerHour: 5,
+  contactPhone: '940-353-0500',
+  adminUrl: 'https://wftxevents.com/admin.html',
   allowedOrigins: [
     'https://wftxevents.com',
     'https://www.wftxevents.com',
@@ -49,8 +51,10 @@ async function route(request, env, ctx) {
   if (pathname.startsWith('/api/admin/')) {
     if (!(await isAdmin(request, env))) return json({ error: 'Unauthorized' }, 401);
     if (method === 'GET' && pathname === '/api/admin/bookings') return adminList(env, url.searchParams.get('date'));
-    const m = pathname.match(/^\/api\/admin\/bookings\/([0-9a-f-]{36})$/);
-    if (method === 'DELETE' && m) return adminCancel(env, m[1]);
+    const m = pathname.match(/^\/api\/admin\/bookings\/([0-9a-f-]{36})(?:\/(approve|decline))?$/);
+    if (m && method === 'POST' && m[2] === 'approve') return adminApprove(env, ctx, m[1]);
+    if (m && method === 'POST' && m[2] === 'decline') return adminDecide(env, ctx, m[1], ['pending'], 'declined');
+    if (m && method === 'DELETE' && !m[2]) return adminDecide(env, ctx, m[1], ['pending', 'confirmed'], 'cancelled');
   }
 
   return json({ error: 'Not found' }, 404);
@@ -128,86 +132,141 @@ async function createBooking(request, env, ctx) {
   const id = crypto.randomUUID();
   const code = confirmationCode();
 
-  // Single statement so the capacity check and insert are atomic.
+  // Requests start as 'pending' and don't hold the slot until an admin approves.
+  // Still refuse a slot that's already fully confirmed.
   const result = await env.DB.prepare(
-    `INSERT INTO bookings (id, code, name, phone, email, party, kids, date, time, notes, ip_hash, created_at)
-     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12
+    `INSERT INTO bookings (id, code, name, phone, email, party, kids, date, time, notes, status, ip_hash, created_at)
+     SELECT ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, 'pending', ?11, ?12
      WHERE (SELECT COUNT(*) FROM bookings WHERE date = ?8 AND time = ?9 AND status = 'confirmed') < ?13`,
   ).bind(id, code, name, phone, email, party, kids, date, time, notes, ipHash, now, CONFIG.capacityPerSlot).run();
 
-  if (!result.meta.changes) return json({ error: 'That time slot just filled up. Please pick another.' }, 409);
+  if (!result.meta.changes) return json({ error: 'That time slot is full. Please pick another.' }, 409);
 
   const booking = { id, code, name, phone, email, party, kids, notes, dateLabel: labelDate(date), timeLabel: labelTime(time) };
-  ctx.waitUntil(sendBookingEmails(env, booking));
+  ctx.waitUntil(notifyNewRequest(env, booking));
 
-  return json({ ok: true, code, date, dateLabel: booking.dateLabel, time, timeLabel: booking.timeLabel, party, kids }, 201);
+  return json({ ok: true, status: 'pending', code, date, dateLabel: booking.dateLabel, time, timeLabel: booking.timeLabel, party, kids }, 201);
 }
 
-// ---------- email (Resend) ----------
+// ---------- notifications (Resend email + ntfy push) ----------
+// All run via ctx.waitUntil after the response; a failure never affects the booking.
 
 const FROM = 'WFTX Zombie Maze <bookings@wftxevents.com>';
+const WHERE = [
+  `Where:  8001 Jacksboro Hwy, Wichita Falls, TX 76310`,
+  `Park alongside the shipping container or in front of the blue building.`,
+];
 
-// Runs after the response is sent; a failure here never affects the booking.
-async function sendBookingEmails(env, b) {
-  const owners = (env.NOTIFY_EMAILS || '').split(',').map((s) => s.trim()).filter(Boolean);
-  if (!env.RESEND_API_KEY) {
-    console.warn('RESEND_API_KEY not set; skipping booking emails');
-    return;
-  }
-  const when = `${b.dateLabel} at ${b.timeLabel}`;
-  const group = `${b.party} ${b.party === 1 ? 'person' : 'people'}${b.kids ? `, ${b.kids} ${b.kids === 1 ? 'kid' : 'kids'} (glow bands)` : ''}`;
-  const sends = [];
+const owners = (env) => (env.NOTIFY_EMAILS || '').split(',').map((s) => s.trim()).filter(Boolean);
+const when = (b) => `${b.dateLabel} at ${b.timeLabel}`;
+const groupText = (b) => `${b.party} ${b.party === 1 ? 'person' : 'people'}${b.kids ? `, ${b.kids} ${b.kids === 1 ? 'kid' : 'kids'} (glow bands)` : ''}`;
 
-  if (owners.length) {
-    sends.push(resend(env, `owner-${b.id}`, {
-      from: FROM,
-      to: owners,
+async function settle(label, promises) {
+  const results = await Promise.allSettled(promises);
+  for (const r of results) if (r.status === 'rejected') console.error(`${label} failed:`, r.reason?.message || r.reason);
+}
+
+async function notifyNewRequest(env, b) {
+  const sends = [
+    ntfy(env, {
+      title: `Booking request: ${b.name}`,
+      message: `${when(b)}\n${groupText(b)}\nTap to approve or decline.`,
+      priority: 4,
+      tags: ['zombie'],
+      click: CONFIG.adminUrl,
+      actions: [{ action: 'view', label: 'Review', url: CONFIG.adminUrl, clear: true }],
+    }),
+  ];
+
+  if (owners(env).length) {
+    sends.push(sendEmail(env, `owner-request-${b.id}`, {
+      to: owners(env),
       reply_to: b.email,
-      subject: `New Sunday booking: ${b.name}, ${when}`,
+      subject: `Needs approval: ${b.name}, ${when(b)}`,
       text: [
-        `New Sunday booking`,
+        `New Sunday booking request -- not confirmed until you approve it.`,
         ``,
-        `When:   ${when}`,
+        `When:   ${when(b)}`,
         `Name:   ${b.name}`,
-        `Group:  ${group}`,
+        `Group:  ${groupText(b)}`,
         `Phone:  ${b.phone}`,
         `Email:  ${b.email}`,
         `Code:   ${b.code}`,
         b.notes ? `Notes:  ${b.notes}` : null,
         ``,
-        `All bookings: https://wftxevents.com/admin.html`,
+        `Approve or decline: ${CONFIG.adminUrl}`,
       ].filter((l) => l !== null).join('\n'),
     }));
   }
 
-  sends.push(resend(env, `guest-${b.id}`, {
-    from: FROM,
+  sends.push(sendEmail(env, `guest-request-${b.id}`, {
     to: [b.email],
-    reply_to: owners.length ? owners : undefined,
-    subject: `You're booked: Zombie Maze, ${when}`,
+    subject: `Request received: Zombie Maze, ${when(b)}`,
     text: [
-      `${b.name}, you're in.`,
+      `${b.name}, we got your request. It's not confirmed yet.`,
       ``,
-      `When:   ${when}`,
-      `Group:  ${group}`,
+      `When:   ${when(b)}`,
+      `Group:  ${groupText(b)}`,
       `Code:   ${b.code}`,
       ``,
-      `Where:  8001 Jacksboro Hwy, Wichita Falls, TX 76310`,
-      `Park alongside the shipping container or in front of the blue building.`,
-      ``,
-      `Closed-toe shoes. The paint washes out. The memories don't.`,
-      ``,
-      `Need to change or cancel? Just reply to this email.`,
+      `We'll email you as soon as it's confirmed. Questions? Call ${CONFIG.contactPhone}.`,
       ``,
       `WFTX Events - https://wftxevents.com`,
     ].join('\n'),
   }));
 
-  const results = await Promise.allSettled(sends);
-  for (const r of results) if (r.status === 'rejected') console.error('booking email failed:', r.reason?.message || r.reason);
+  await settle('new-request notifications', sends);
 }
 
-async function resend(env, idempotencyKey, payload) {
+async function notifyGuestDecision(env, b, status) {
+  const templates = {
+    confirmed: {
+      subject: `You're confirmed: Zombie Maze, ${when(b)}`,
+      lines: [
+        `${b.name}, you're in. The infected are expecting you.`,
+        ``,
+        `When:   ${when(b)}`,
+        `Group:  ${groupText(b)}`,
+        `Code:   ${b.code}`,
+        ``,
+        ...WHERE,
+        ``,
+        `Closed-toe shoes. The paint washes out. The memories don't.`,
+        ``,
+        `Need to change or cancel? Reply to this email or call ${CONFIG.contactPhone}.`,
+      ],
+    },
+    declined: {
+      subject: `We couldn't confirm your Zombie Maze request`,
+      lines: [
+        `${b.name}, we couldn't fit your group in on ${when(b)}.`,
+        ``,
+        `Pick another Sunday slot at https://wftxevents.com/#book, or call ${CONFIG.contactPhone}`,
+        `and we'll find something. Thursday-Saturday 8 PM to midnight is walk-up, no reservation needed.`,
+      ],
+    },
+    cancelled: {
+      subject: `Your Zombie Maze booking was cancelled`,
+      lines: [
+        `${b.name}, your booking for ${when(b)} (code ${b.code}) has been cancelled.`,
+        ``,
+        `If that's a surprise, call ${CONFIG.contactPhone}.`,
+      ],
+    },
+  };
+  const t = templates[status];
+  if (!t) return;
+  await settle(`${status} email`, [
+    sendEmail(env, `guest-${status}-${b.id}`, {
+      to: [b.email],
+      subject: t.subject,
+      text: [...t.lines, ``, `WFTX Events - https://wftxevents.com`].join('\n'),
+    }),
+  ]);
+}
+
+async function sendEmail(env, idempotencyKey, { to, subject, text, reply_to }) {
+  if (!env.RESEND_API_KEY) return console.warn('RESEND_API_KEY not set; skipping email');
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -215,9 +274,20 @@ async function resend(env, idempotencyKey, payload) {
       'Content-Type': 'application/json',
       'Idempotency-Key': idempotencyKey,
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify({ from: FROM, to, subject, text, reply_to: reply_to || (owners(env).length ? owners(env) : undefined) }),
   });
   if (!res.ok) throw new Error(`Resend ${res.status}: ${(await res.text()).slice(0, 300)}`);
+}
+
+// JSON publish so names with accents etc. survive (headers must be ASCII).
+async function ntfy(env, msg) {
+  if (!env.NTFY_TOPIC) return console.warn('NTFY_TOPIC not set; skipping push');
+  const res = await fetch('https://ntfy.sh/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ topic: env.NTFY_TOPIC, ...msg }),
+  });
+  if (!res.ok) throw new Error(`ntfy ${res.status}: ${(await res.text()).slice(0, 300)}`);
 }
 
 // ---------- admin ----------
@@ -243,10 +313,43 @@ async function adminList(env, date) {
   });
 }
 
-async function adminCancel(env, id) {
-  const result = await env.DB.prepare(`UPDATE bookings SET status = 'cancelled' WHERE id = ? AND status = 'confirmed'`).bind(id).run();
-  if (!result.meta.changes) return json({ error: 'Booking not found or already cancelled.' }, 404);
-  return json({ ok: true });
+async function getBooking(env, id) {
+  const r = await env.DB.prepare(`SELECT * FROM bookings WHERE id = ?`).bind(id).first();
+  return r && { ...r, dateLabel: labelDate(r.date), timeLabel: labelTime(r.time) };
+}
+
+// Atomic: only confirms if the slot still has room among confirmed bookings.
+async function adminApprove(env, ctx, id) {
+  const now = Math.floor(Date.now() / 1000);
+  const result = await env.DB.prepare(
+    `UPDATE bookings SET status = 'confirmed', decided_at = ?2
+     WHERE id = ?1 AND status = 'pending'
+       AND (SELECT COUNT(*) FROM bookings o
+            WHERE o.status = 'confirmed'
+              AND o.date = (SELECT date FROM bookings WHERE id = ?1)
+              AND o.time = (SELECT time FROM bookings WHERE id = ?1)) < ?3`,
+  ).bind(id, now, CONFIG.capacityPerSlot).run();
+
+  const b = await getBooking(env, id);
+  if (!b) return json({ error: 'Booking not found.' }, 404);
+  if (!result.meta.changes) {
+    if (b.status !== 'pending') return json({ error: `Already ${b.status}.` }, 409);
+    return json({ error: 'That slot is already full. Decline this one or cancel another booking first.' }, 409);
+  }
+  ctx.waitUntil(notifyGuestDecision(env, b, 'confirmed'));
+  return json({ ok: true, status: 'confirmed' });
+}
+
+async function adminDecide(env, ctx, id, fromStatuses, toStatus) {
+  const now = Math.floor(Date.now() / 1000);
+  const result = await env.DB.prepare(
+    `UPDATE bookings SET status = ?2, decided_at = ?3 WHERE id = ?1 AND status IN (${fromStatuses.map((s) => `'${s}'`).join(',')})`,
+  ).bind(id, toStatus, now).run();
+  const b = await getBooking(env, id);
+  if (!b) return json({ error: 'Booking not found.' }, 404);
+  if (!result.meta.changes) return json({ error: `Can't change a ${b.status} booking.` }, 409);
+  ctx.waitUntil(notifyGuestDecision(env, b, toStatus));
+  return json({ ok: true, status: toStatus });
 }
 
 // ---------- helpers ----------

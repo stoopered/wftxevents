@@ -128,8 +128,9 @@
 <section class="panel" id="book">
   <div class="wrap narrow">
     <h2>Sunday Appointments</h2>
-    <p>Sundays are appointment only. Pick a date and a time, tell us how many are coming, and we'll hold the maze
-      for your group.</p>
+    <p>Sundays are appointment only. Pick a date and a time and tell us how many are coming. We'll review your
+      request and email you once it's confirmed; your slot isn't held until then. Questions? Call
+      <a href="tel:+19403530500">940-353-0500</a>.</p>
 
     <form id="bookingForm" class="booking-form" novalidate>
       <div class="field-row">
@@ -148,12 +149,12 @@
         <label>Your name
           <input type="text" name="name" required maxlength="80" autocomplete="name">
         </label>
-        <label>Phone
-          <input type="tel" name="phone" required autocomplete="tel" inputmode="tel">
+        <label>Contact phone
+          <input type="tel" name="phone" required autocomplete="tel" inputmode="tel" placeholder="940-555-0123">
         </label>
       </div>
       <div class="field-row">
-        <label>Email
+        <label>Contact email <span class="hint">(your confirmation goes here)</span>
           <input type="email" name="email" required autocomplete="email">
         </label>
       </div>
@@ -169,17 +170,18 @@
         <textarea name="notes" rows="2" maxlength="300"></textarea>
       </label>
       <div class="hp"><label>Website <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
-      <button class="btn btn-primary" type="submit" id="bookBtn">Hold My Slot</button>
+      <button class="btn btn-primary" type="submit" id="bookBtn">Request This Slot</button>
       <p class="form-msg" id="formMsg" role="status" aria-live="polite"></p>
     </form>
 
     <div class="confirmation" id="confirmation" hidden>
-      <h3>You're in.</h3>
-      <p>Confirmation code <strong id="confCode"></strong></p>
+      <h3>Request received.</h3>
+      <p>Reference code <strong id="confCode"></strong></p>
       <p id="confDetails"></p>
-      <p class="fine-print">Screenshot this. We'll have your name at the entrance. Need to change or cancel? Contact
-        us using the info at the bottom of the page.</p>
-      <button class="btn btn-ghost" type="button" id="bookAnother">Book another slot</button>
+      <p>This isn't confirmed yet. We'll review it and email you as soon as it is. Check your inbox (and spam folder)
+        for a message from bookings@wftxevents.com.</p>
+      <p class="fine-print">Questions or changes? Call <a href="tel:+19403530500">940-353-0500</a>.</p>
+      <button class="btn btn-ghost" type="button" id="bookAnother">Request another slot</button>
     </div>
   </div>
 </section>
@@ -220,7 +222,7 @@
 <footer>
   <div class="wrap footer-inner">
     <p class="logo">WFTX <span>EVENTS</span></p>
-    <p data-fill="contact-email">[contact@wftxevents.com]</p>
+    <p><a href="tel:+19403530500">940-353-0500</a> &middot; 8001 Jacksboro Hwy, Wichita Falls, TX 76310</p>
     <p class="fine-print">&copy; <span id="year"></span> WFTX Events. Get to the exit.</p>
   </div>
 </footer>
