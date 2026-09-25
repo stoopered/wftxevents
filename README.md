@@ -38,7 +38,7 @@ Sundays are appointment only. The form on the site calls the Worker:
 - `GET /api/admin/bookings`, `DELETE /api/admin/bookings/:id` -- Bearer `ADMIN_TOKEN`
 
 Tune season dates, slot times, capacity per slot, and max group size in the `CONFIG` block at the
-top of `worker/src/index.js`. Friday/Saturday hours are plain text in `index.html`.
+top of `worker/src/index.js`. Thursday-Saturday walk-up hours are plain text in `index.html`.
 
 Spam controls: honeypot field, per-IP hourly cap (IP stored as a SHA-256 hash), server-side
 validation. No confirmation email is sent -- the guest gets a confirmation code on screen and the

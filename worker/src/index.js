@@ -5,7 +5,8 @@ const CONFIG = {
   timeZone: 'America/Chicago',
   season: { start: '2026-10-01', end: '2026-10-31' },
   bookableWeekday: 0, // Sunday
-  slots: ['18:00', '18:30', '19:00', '19:30', '20:00', '20:30', '21:00', '21:30'],
+  // Sunday 7:30 PM - midnight; last entry 11:30 PM (runs take 20-30 min).
+  slots: ['19:30', '20:00', '20:30', '21:00', '21:30', '22:00', '22:30', '23:00', '23:30'],
   capacityPerSlot: 2, // groups per slot
   maxParty: 10,
   maxBookingsPerIpPerHour: 5,
