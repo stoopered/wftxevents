@@ -19,13 +19,13 @@ const CONFIG = {
 };
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const cors = corsHeaders(request.headers.get('Origin') || '');
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
 
     let res;
     try {
-      res = await route(request, env);
+      res = await route(request, env, ctx);
     } catch (err) {
       console.error(err);
       res = json({ error: 'Something went wrong on our end.' }, 500);
@@ -36,7 +36,7 @@ export default {
   },
 };
 
-async function route(request, env) {
+async function route(request, env, ctx) {
   const url = new URL(request.url);
   const { pathname } = url;
   const method = request.method;
@@ -44,7 +44,7 @@ async function route(request, env) {
   if (method === 'GET' && pathname === '/') return json({ ok: true, service: 'wftxevents-booking' });
   if (method === 'GET' && pathname === '/api/dates') return listDates(env);
   if (method === 'GET' && pathname === '/api/slots') return listSlots(env, url.searchParams.get('date'));
-  if (method === 'POST' && pathname === '/api/bookings') return createBooking(request, env);
+  if (method === 'POST' && pathname === '/api/bookings') return createBooking(request, env, ctx);
 
   if (pathname.startsWith('/api/admin/')) {
     if (!(await isAdmin(request, env))) return json({ error: 'Unauthorized' }, 401);
@@ -87,7 +87,7 @@ async function listSlots(env, date) {
   });
 }
 
-async function createBooking(request, env) {
+async function createBooking(request, env, ctx) {
   let body;
   try {
     body = await request.json();
@@ -97,7 +97,8 @@ async function createBooking(request, env) {
 
   if (body.website) return json({ error: 'Invalid request.' }, 400); // honeypot
 
-  const name = str(body.name, 80);
+  // Line breaks stripped: the name ends up in an email subject line.
+  const name = (str(body.name, 80) || '').replace(/[\r\n\t]+/g, ' ').trim() || null;
   const phone = (str(body.phone, 30) || '').replace(/[^\d+]/g, '');
   const email = str(body.email, 120);
   const party = int(body.party);
@@ -136,7 +137,87 @@ async function createBooking(request, env) {
 
   if (!result.meta.changes) return json({ error: 'That time slot just filled up. Please pick another.' }, 409);
 
-  return json({ ok: true, code, date, dateLabel: labelDate(date), time, timeLabel: labelTime(time), party, kids }, 201);
+  const booking = { id, code, name, phone, email, party, kids, notes, dateLabel: labelDate(date), timeLabel: labelTime(time) };
+  ctx.waitUntil(sendBookingEmails(env, booking));
+
+  return json({ ok: true, code, date, dateLabel: booking.dateLabel, time, timeLabel: booking.timeLabel, party, kids }, 201);
+}
+
+// ---------- email (Resend) ----------
+
+const FROM = 'WFTX Zombie Maze <bookings@wftxevents.com>';
+
+// Runs after the response is sent; a failure here never affects the booking.
+async function sendBookingEmails(env, b) {
+  const owners = (env.NOTIFY_EMAILS || '').split(',').map((s) => s.trim()).filter(Boolean);
+  if (!env.RESEND_API_KEY) {
+    console.warn('RESEND_API_KEY not set; skipping booking emails');
+    return;
+  }
+  const when = `${b.dateLabel} at ${b.timeLabel}`;
+  const group = `${b.party} ${b.party === 1 ? 'person' : 'people'}${b.kids ? `, ${b.kids} ${b.kids === 1 ? 'kid' : 'kids'} (glow bands)` : ''}`;
+  const sends = [];
+
+  if (owners.length) {
+    sends.push(resend(env, `owner-${b.id}`, {
+      from: FROM,
+      to: owners,
+      reply_to: b.email,
+      subject: `New Sunday booking: ${b.name}, ${when}`,
+      text: [
+        `New Sunday booking`,
+        ``,
+        `When:   ${when}`,
+        `Name:   ${b.name}`,
+        `Group:  ${group}`,
+        `Phone:  ${b.phone}`,
+        `Email:  ${b.email}`,
+        `Code:   ${b.code}`,
+        b.notes ? `Notes:  ${b.notes}` : null,
+        ``,
+        `All bookings: https://wftxevents.com/admin.html`,
+      ].filter((l) => l !== null).join('\n'),
+    }));
+  }
+
+  sends.push(resend(env, `guest-${b.id}`, {
+    from: FROM,
+    to: [b.email],
+    reply_to: owners.length ? owners : undefined,
+    subject: `You're booked: Zombie Maze, ${when}`,
+    text: [
+      `${b.name}, you're in.`,
+      ``,
+      `When:   ${when}`,
+      `Group:  ${group}`,
+      `Code:   ${b.code}`,
+      ``,
+      `Where:  8001 Jacksboro Hwy, Wichita Falls, TX 76310`,
+      `Park alongside the shipping container or in front of the blue building.`,
+      ``,
+      `Closed-toe shoes. The paint washes out. The memories don't.`,
+      ``,
+      `Need to change or cancel? Just reply to this email.`,
+      ``,
+      `WFTX Events - https://wftxevents.com`,
+    ].join('\n'),
+  }));
+
+  const results = await Promise.allSettled(sends);
+  for (const r of results) if (r.status === 'rejected') console.error('booking email failed:', r.reason?.message || r.reason);
+}
+
+async function resend(env, idempotencyKey, payload) {
+  const res = await fetch('https://api.resend.com/emails', {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${env.RESEND_API_KEY}`,
+      'Content-Type': 'application/json',
+      'Idempotency-Key': idempotencyKey,
+    },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(`Resend ${res.status}: ${(await res.text()).slice(0, 300)}`);
 }
 
 // ---------- admin ----------

@@ -23,7 +23,9 @@ Domain registration stays at Namecheap; only the nameservers point at Cloudflare
 | `CLOUDFLARE_API_TOKEN` | DNS edit on wftxevents.com only | terraform-cloudflare-dns.yml |
 | `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY` | Object read/write on `wftxevents-tfstate` only | terraform-cloudflare-dns.yml (state backend) |
 | `CLOUDFLARE_WORKERS_TOKEN` | Workers Scripts + D1 edit | deploy-worker.yml |
-| `BOOKING_ADMIN_TOKEN` | Random string you generate; pushed into the Worker as `ADMIN_TOKEN` | deploy-worker.yml; you paste it into `/admin.html` to view bookings |
+| `BOOKING_ADMIN_TOKEN` | Random string, also in your macOS Keychain (`security find-generic-password -s wftxevents-booking-admin -w`); pushed into the Worker as `ADMIN_TOKEN` | deploy-worker.yml; paste into `/admin.html` to view bookings |
+| `RESEND_API_KEY` | Resend sending key | deploy-worker.yml; booking emails |
+| `BOOKING_NOTIFY_EMAILS` | Comma-separated addresses that get an email per booking | deploy-worker.yml |
 
 No secret is ever written to a file in this repo. Set them with `gh secret set NAME --repo stoopered/wftxevents`
 and paste the value at the prompt.
@@ -41,8 +43,12 @@ Tune season dates, slot times, capacity per slot, and max group size in the `CON
 top of `worker/src/index.js`. Thursday-Saturday walk-up hours are plain text in `index.html`.
 
 Spam controls: honeypot field, per-IP hourly cap (IP stored as a SHA-256 hash), server-side
-validation. No confirmation email is sent -- the guest gets a confirmation code on screen and the
-admin page shows their phone/email.
+validation.
+
+Email (Resend, sent from `bookings@wftxevents.com` after the booking is saved, so a mail failure
+never blocks a booking): the guest gets a confirmation with reply-to set to you, and every address in
+`BOOKING_NOTIFY_EMAILS` gets an alert with reply-to set to the guest. To change who's notified:
+`gh secret set BOOKING_NOTIFY_EMAILS --body "a@x.com,b@y.com"` then re-run the deploy-worker workflow.
 
 ## Before this goes live
 

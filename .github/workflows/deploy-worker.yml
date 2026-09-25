@@ -34,6 +34,8 @@ jobs:
         uses: cloudflare/wrangler-action@v3
         env:
           ADMIN_TOKEN: ${{ secrets.BOOKING_ADMIN_TOKEN }}
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          NOTIFY_EMAILS: ${{ secrets.BOOKING_NOTIFY_EMAILS }}
         with:
           apiToken: ${{ secrets.CLOUDFLARE_WORKERS_TOKEN }}
           accountId: 5d3e356815fa558bc52164ed77897f54
@@ -41,3 +43,5 @@ jobs:
           command: deploy
           secrets: |
             ADMIN_TOKEN
+            RESEND_API_KEY
+            NOTIFY_EMAILS
