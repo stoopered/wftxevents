@@ -26,7 +26,6 @@ Domain registration stays at Namecheap; only the nameservers point at Cloudflare
 | `BOOKING_ADMIN_TOKEN` | Random string, also in your macOS Keychain (`security find-generic-password -s wftxevents-booking-admin -w`); pushed into the Worker as `ADMIN_TOKEN` | deploy-worker.yml; paste into `/admin.html` to view bookings |
 | `RESEND_API_KEY` | Resend sending key | deploy-worker.yml; booking emails |
 | `BOOKING_NOTIFY_EMAILS` | Comma-separated addresses that get an email per booking request | deploy-worker.yml |
-| `NTFY_TOPIC` | Private ntfy topic name (also in Keychain: `security find-generic-password -s wftxevents-ntfy-topic -w`) | deploy-worker.yml; phone push per request |
 
 No secret is ever written to a file in this repo. Set them with `gh secret set NAME --repo stoopered/wftxevents`
 and paste the value at the prompt.
@@ -34,14 +33,14 @@ and paste the value at the prompt.
 ## Booking
 
 Sundays are appointment only, and every request needs approval. A new request is `pending`: it does not
-hold the slot. Staff get a phone push (ntfy) and an email, then Approve or Decline on `/admin.html`.
+hold the slot. Staff get a "Needs approval" email, then Approve or Decline on `/admin.html`.
 Approval is atomic -- it only succeeds if the slot still has room among confirmed bookings -- so two
 approvals can't overbook. The guest is emailed at each step: request received, confirmed, declined,
 or cancelled.
 
-Phone push: install the ntfy app (iOS/Android), tap +, and subscribe to the topic name from
-`NTFY_TOPIC`. Anyone subscribed gets every request; the topic name is the only protection, so share it
-only with staff. Rotate it by setting a new `NTFY_TOPIC` secret and re-running deploy-worker.
+Phone alerts: in Gmail on the web, filter `from:bookings@wftxevents.com subject:"Needs approval"` into a label,
+then turn on label notifications for it in the Gmail Android app. (ntfy.sh was tried and dropped: its
+free tier rate-limits by IP, and Cloudflare Workers share egress IPs, so pushes were rejected with 429.)
 
 API:
 

@@ -10,7 +10,7 @@ const CONFIG = {
   capacityPerSlot: 2, // groups per slot
   maxParty: 10,
   maxBookingsPerIpPerHour: 5,
-  contactPhone: '940-353-0500',
+  contactPhone: '940-363-0500',
   adminUrl: 'https://wftxevents.com/admin.html',
   allowedOrigins: [
     'https://wftxevents.com',
@@ -148,7 +148,7 @@ async function createBooking(request, env, ctx) {
   return json({ ok: true, status: 'pending', code, date, dateLabel: booking.dateLabel, time, timeLabel: booking.timeLabel, party, kids }, 201);
 }
 
-// ---------- notifications (Resend email + ntfy push) ----------
+// ---------- notifications (Resend email) ----------
 // All run via ctx.waitUntil after the response; a failure never affects the booking.
 
 const FROM = 'WFTX Zombie Maze <bookings@wftxevents.com>';
@@ -167,16 +167,7 @@ async function settle(label, promises) {
 }
 
 async function notifyNewRequest(env, b) {
-  const sends = [
-    ntfy(env, {
-      title: `Booking request: ${b.name}`,
-      message: `${when(b)}\n${groupText(b)}\nTap to approve or decline.`,
-      priority: 4,
-      tags: ['zombie'],
-      click: CONFIG.adminUrl,
-      actions: [{ action: 'view', label: 'Review', url: CONFIG.adminUrl, clear: true }],
-    }),
-  ];
+  const sends = [];
 
   if (owners(env).length) {
     sends.push(sendEmail(env, `owner-request-${b.id}`, {
@@ -277,17 +268,6 @@ async function sendEmail(env, idempotencyKey, { to, subject, text, reply_to }) {
     body: JSON.stringify({ from: FROM, to, subject, text, reply_to: reply_to || (owners(env).length ? owners(env) : undefined) }),
   });
   if (!res.ok) throw new Error(`Resend ${res.status}: ${(await res.text()).slice(0, 300)}`);
-}
-
-// JSON publish so names with accents etc. survive (headers must be ASCII).
-async function ntfy(env, msg) {
-  if (!env.NTFY_TOPIC) return console.warn('NTFY_TOPIC not set; skipping push');
-  const res = await fetch('https://ntfy.sh/', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ topic: env.NTFY_TOPIC, ...msg }),
-  });
-  if (!res.ok) throw new Error(`ntfy ${res.status}: ${(await res.text()).slice(0, 300)}`);
 }
 
 // ---------- admin ----------
