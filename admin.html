@@ -32,7 +32,22 @@
   tr.cancelled td, tr.declined td { color: var(--dim); text-decoration: line-through; }
   .msg { color: var(--red); min-height: 1.4em; }
   .summary { color: var(--dim); font-size: 0.9rem; }
-  @media (max-width: 720px) { th:nth-child(6), td:nth-child(6) { display: none; } }
+  @media (max-width: 720px) { #out th:nth-child(6), #out td:nth-child(6) { display: none; } }
+  .section-title { margin-top: 48px; }
+  .detail { background: #fff; color: #111; padding: 16px 20px; border-radius: 6px; margin-top: 16px; }
+  .detail h2 { color: #111; margin-top: 0; }
+  .detail td, .detail th { border-color: #ddd; color: #111; }
+  .detail td { overflow-wrap: anywhere; }
+  .detail figure { margin: 16px 0; }
+  .detail img { max-width: 420px; width: 100%; border: 1px solid #ccc; display: block; }
+  .detail figcaption { font-size: 0.9rem; margin-top: 4px; }
+  .detail button { background: #fff; color: #111; border-color: #999; }
+  @media print {
+    body { background: #fff; padding: 0; }
+    .wrap > *:not(#waiverDetail) { display: none !important; }
+    .detail { padding: 0; }
+    .detail .no-print { display: none; }
+  }
 </style>
 </head>
 <body>
@@ -45,6 +60,16 @@
     <span class="msg" id="msg"></span>
   </div>
   <div id="out"></div>
+
+  <h1 class="section-title">Waivers</h1>
+  <div class="row">
+    <input type="date" id="waiverDate">
+    <button id="loadWaivers">Show day</button>
+    <button id="allWaivers">Show all</button>
+    <span class="summary" id="waiverSummary"></span>
+  </div>
+  <div id="waiverOut"></div>
+  <div id="waiverDetail" class="detail" hidden></div>
 </div>
 
 <script>
@@ -129,10 +154,93 @@ out.addEventListener('click', async (e) => {
   catch (err) { msg.textContent = err.message; e.target.disabled = false; }
 });
 
-document.getElementById('load').addEventListener('click', load);
-document.getElementById('forget').addEventListener('click', () => { sessionStorage.removeItem('adminToken'); tokenInput.value = ''; out.innerHTML = ''; });
-tokenInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') load(); });
-if (tokenInput.value) load();
+// ---------- waivers ----------
+
+const waiverOut = document.getElementById('waiverOut');
+const waiverDetail = document.getElementById('waiverDetail');
+const waiverDate = document.getElementById('waiverDate');
+const waiverSummary = document.getElementById('waiverSummary');
+waiverDate.value = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' });
+
+async function loadWaivers(all = false) {
+  waiverOut.innerHTML = '';
+  waiverDetail.hidden = true;
+  waiverSummary.textContent = '';
+  if (!tokenInput.value) return;
+  let waivers;
+  try { ({ waivers } = await api('/api/admin/waivers' + (all ? '' : `?date=${encodeURIComponent(waiverDate.value)}`))); }
+  catch (e) { msg.textContent = e.message; return; }
+  waiverSummary.textContent = `${waivers.length} waiver${waivers.length === 1 ? '' : 's'}${all ? ' (most recent 500)' : ''}`;
+  if (!waivers.length) return;
+  waiverOut.innerHTML = `
+    <table>
+      <tr><th>Signed</th><th>Participant</th><th>Contact</th><th>Emergency contact</th><th>Ref</th><th></th></tr>
+      ${waivers.map((w) => `
+        <tr>
+          <td>${esc(w.signedLabel)}</td>
+          <td>${esc(w.participant_name)}${w.is_minor ? `<br><span class="summary">minor, signed by ${esc(w.guardian_name)}</span>` : ''}</td>
+          <td><a href="tel:${esc(w.phone)}">${esc(w.phone)}</a>${w.email ? `<br>${esc(w.email)}` : ''}</td>
+          <td>${esc(w.emergency_contact)}</td>
+          <td>${esc(w.reference)}</td>
+          <td><button data-waiver="${esc(w.id)}">View</button></td>
+        </tr>`).join('')}
+    </table>`;
+}
+
+function showWaiver(w) {
+  const rows = [
+    ['Participant', w.participant_name],
+    ['Under 18', w.is_minor ? 'Yes' : 'No'],
+    ...(w.is_minor ? [['Parent / guardian', w.guardian_name]] : []),
+    ['Phone', w.phone],
+    ['Email', w.email || '(not provided)'],
+    ['Copy emailed to guest', w.email_copy ? 'Yes' : 'No'],
+    ['Emergency contact', w.emergency_contact],
+    ['Signed', w.signedLabel],
+    ['Waiver version', w.waiver_version],
+    ['Waiver text SHA-256', w.waiver_sha256],
+    ['IP address', w.ip],
+    ['Device', w.user_agent],
+  ];
+  waiverDetail.innerHTML = `
+    <h2>Waiver ${esc(w.reference)}</h2>
+    <table>${rows.map(([l, v]) => `<tr><th>${esc(l)}</th><td>${esc(v)}</td></tr>`).join('')}</table>
+    <div class="sigs"></div>
+    <p class="no-print"><button data-act="print">Print</button> <button data-act="close">Close</button></p>`;
+  const sigs = waiverDetail.querySelector('.sigs');
+  for (const [label, name, src] of [['Participant signature', w.participant_name, w.participant_signature], ['Parent / guardian signature', w.guardian_name, w.guardian_signature]]) {
+    if (!src || !src.startsWith('data:image/png;base64,')) continue;
+    const fig = document.createElement('figure');
+    const img = new Image();
+    img.src = src;
+    img.alt = `${label}: ${name}`;
+    const cap = document.createElement('figcaption');
+    cap.textContent = `${label}: ${name}`;
+    fig.append(img, cap);
+    sigs.append(fig);
+  }
+  waiverDetail.hidden = false;
+  waiverDetail.scrollIntoView({ behavior: 'smooth' });
+}
+
+waiverOut.addEventListener('click', async (e) => {
+  const id = e.target.dataset.waiver;
+  if (!id) return;
+  try { const { waiver } = await api('/api/admin/waivers/' + id); showWaiver(waiver); }
+  catch (err) { msg.textContent = err.message; }
+});
+waiverDetail.addEventListener('click', (e) => {
+  if (e.target.dataset.act === 'print') window.print();
+  if (e.target.dataset.act === 'close') waiverDetail.hidden = true;
+});
+document.getElementById('loadWaivers').addEventListener('click', () => loadWaivers(false));
+document.getElementById('allWaivers').addEventListener('click', () => loadWaivers(true));
+
+const loadAll = () => { load(); loadWaivers(false); };
+document.getElementById('load').addEventListener('click', loadAll);
+document.getElementById('forget').addEventListener('click', () => { sessionStorage.removeItem('adminToken'); tokenInput.value = ''; out.innerHTML = ''; waiverOut.innerHTML = ''; waiverDetail.hidden = true; waiverSummary.textContent = ''; });
+tokenInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') loadAll(); });
+if (tokenInput.value) loadAll();
 </script>
 </body>
 </html>

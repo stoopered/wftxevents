@@ -1,5 +1,7 @@
-// Sunday appointment booking API for wftxevents.com.
+// Sunday appointment booking + participant waiver API for wftxevents.com.
 // Storage: Cloudflare D1 (binding DB). Admin auth: ADMIN_TOKEN secret.
+
+import { WAIVER, WAIVER_VERSION } from './waiver-text.js';
 
 const CONFIG = {
   timeZone: 'America/Chicago',
@@ -47,10 +49,15 @@ async function route(request, env, ctx) {
   if (method === 'GET' && pathname === '/api/dates') return listDates(env);
   if (method === 'GET' && pathname === '/api/slots') return listSlots(env, url.searchParams.get('date'));
   if (method === 'POST' && pathname === '/api/bookings') return createBooking(request, env, ctx);
+  if (method === 'GET' && pathname === '/api/waiver') return json({ version: WAIVER_VERSION, waiver: WAIVER });
+  if (method === 'POST' && pathname === '/api/waivers') return createWaiver(request, env, ctx);
 
   if (pathname.startsWith('/api/admin/')) {
     if (!(await isAdmin(request, env))) return json({ error: 'Unauthorized' }, 401);
     if (method === 'GET' && pathname === '/api/admin/bookings') return adminList(env, url.searchParams.get('date'));
+    if (method === 'GET' && pathname === '/api/admin/waivers') return adminListWaivers(env, url.searchParams.get('date'));
+    const w = pathname.match(/^\/api\/admin\/waivers\/([0-9a-f-]{36})$/);
+    if (w && method === 'GET') return adminGetWaiver(env, w[1]);
     const m = pathname.match(/^\/api\/admin\/bookings\/([0-9a-f-]{36})(?:\/(approve|decline))?$/);
     if (m && method === 'POST' && m[2] === 'approve') return adminApprove(env, ctx, m[1]);
     if (m && method === 'POST' && m[2] === 'decline') return adminDecide(env, ctx, m[1], ['pending'], 'declined');
@@ -256,7 +263,7 @@ async function notifyGuestDecision(env, b, status) {
   ]);
 }
 
-async function sendEmail(env, idempotencyKey, { to, subject, text, reply_to }) {
+async function sendEmail(env, idempotencyKey, { to, subject, text, html, attachments, reply_to }) {
   if (!env.RESEND_API_KEY) return console.warn('RESEND_API_KEY not set; skipping email');
   const res = await fetch('https://api.resend.com/emails', {
     method: 'POST',
@@ -265,9 +272,223 @@ async function sendEmail(env, idempotencyKey, { to, subject, text, reply_to }) {
       'Content-Type': 'application/json',
       'Idempotency-Key': idempotencyKey,
     },
-    body: JSON.stringify({ from: FROM, to, subject, text, reply_to: reply_to || (owners(env).length ? owners(env) : undefined) }),
+    body: JSON.stringify({
+      from: FROM, to, subject, text, html, attachments,
+      reply_to: reply_to || (owners(env).length ? owners(env) : undefined),
+    }),
   });
   if (!res.ok) throw new Error(`Resend ${res.status}: ${(await res.text()).slice(0, 300)}`);
+}
+
+// ---------- waivers ----------
+
+const MAX_SIGNATURE_BYTES = 300 * 1024;
+// High on purpose: a family on venue Wi-Fi shares one IP and signs several in a row.
+const MAX_WAIVERS_PER_IP_PER_HOUR = 60;
+
+let waiverHashCache;
+async function waiverHash() {
+  waiverHashCache ??= await sha256(JSON.stringify(WAIVER));
+  return waiverHashCache;
+}
+
+// Accepts only a real PNG data URL within the size cap; returns the base64 payload.
+function parseSignature(v) {
+  if (typeof v !== 'string' || !v.startsWith('data:image/png;base64,')) return null;
+  const b64 = v.slice('data:image/png;base64,'.length);
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(b64)) return null;
+  let bin;
+  try {
+    bin = atob(b64);
+  } catch {
+    return null;
+  }
+  if (bin.length < 100 || bin.length > MAX_SIGNATURE_BYTES || !bin.startsWith('\x89PNG\r\n\x1a\n')) return null;
+  return b64;
+}
+
+async function createWaiver(request, env, ctx) {
+  if (Number(request.headers.get('Content-Length') || 0) > 1_500_000) return json({ error: 'Submission too large.' }, 413);
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return json({ error: 'Invalid request body.' }, 400);
+  }
+  if (body.website) return json({ error: 'Invalid request.' }, 400); // honeypot
+  if (body.waiverVersion !== WAIVER_VERSION) {
+    return json({ error: 'This waiver was just updated. Please reload the page and review it again.' }, 409);
+  }
+
+  const oneLine = (v, max) => (str(v, max) || '').replace(/[\r\n\t]+/g, ' ').trim() || null;
+  const participantName = oneLine(body.participantName, 100);
+  const isMinor = body.isMinor === true;
+  const guardianName = isMinor ? oneLine(body.guardianName, 100) : null;
+  const phone = (str(body.phone, 30) || '').replace(/[^\d+]/g, '');
+  const email = str(body.email, 120);
+  const emailCopy = body.emailCopy === true;
+  const emergencyContact = oneLine(body.emergencyContact, 150);
+  const participantSig = body.participantSignature ? parseSignature(body.participantSignature) : null;
+  const guardianSig = isMinor && body.guardianSignature ? parseSignature(body.guardianSignature) : null;
+
+  const errors = [];
+  if (!participantName || participantName.length < 2) errors.push("Please enter the participant's full name.");
+  if (!/^\+?\d{10,15}$/.test(phone)) errors.push('Please enter a valid phone number.');
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.push('Please enter a valid email, or leave it blank.');
+  if (emailCopy && !email) errors.push('Enter an email address to get a copy.');
+  if (!emergencyContact || emergencyContact.length < 3) errors.push('Please enter an emergency contact.');
+  if (body.consent !== true) errors.push('Please check the box to agree to the waiver and sign electronically.');
+  if (body.participantSignature && !participantSig) errors.push('The participant signature could not be read. Clear it and sign again.');
+  if (isMinor) {
+    if (!guardianName || guardianName.length < 2) errors.push("Please enter the parent or guardian's full name.");
+    if (!guardianSig) errors.push('A parent or legal guardian must sign for participants under 18.');
+  } else if (!participantSig) {
+    errors.push('Please sign in the signature box.');
+  }
+  if (errors.length) return json({ error: errors.join(' ') }, 400);
+
+  const ip = request.headers.get('CF-Connecting-IP') || '';
+  const now = Math.floor(Date.now() / 1000);
+  const recent = await env.DB.prepare(`SELECT COUNT(*) AS n FROM waivers WHERE ip = ? AND created_at > ?`).bind(ip, now - 3600).first('n');
+  if (recent >= MAX_WAIVERS_PER_IP_PER_HOUR) return json({ error: 'Too many submissions. Please try again later.' }, 429);
+
+  const record = {
+    id: crypto.randomUUID(),
+    reference: confirmationCode(),
+    participant_name: participantName,
+    is_minor: isMinor ? 1 : 0,
+    guardian_name: guardianName,
+    phone,
+    email,
+    email_copy: emailCopy ? 1 : 0,
+    emergency_contact: emergencyContact,
+    participant_signature: participantSig,
+    guardian_signature: guardianSig,
+    waiver_version: WAIVER_VERSION,
+    waiver_sha256: await waiverHash(),
+    signed_at: now,
+    signed_date: new Date(now * 1000).toLocaleDateString('en-CA', { timeZone: CONFIG.timeZone }),
+    ip,
+    user_agent: (request.headers.get('User-Agent') || '').slice(0, 300),
+    created_at: now,
+  };
+  const cols = Object.keys(record);
+  await env.DB.prepare(`INSERT INTO waivers (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`)
+    .bind(...cols.map((c) => record[c]))
+    .run();
+
+  ctx.waitUntil(sendWaiverEmails(env, record));
+
+  return json({ ok: true, reference: record.reference, signedLabel: signedLabel(record.signed_at), emailCopy: emailCopy && !!email }, 201);
+}
+
+function signedLabel(unix) {
+  return `${new Date(unix * 1000).toLocaleString('en-US', { timeZone: CONFIG.timeZone, dateStyle: 'long', timeStyle: 'short' })} CT`;
+}
+
+const escHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+const waiverPara = (s) => escHtml(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+const waiverPlain = (s) => s.replace(/\*\*(.+?)\*\*/g, '$1');
+
+function waiverEmail(r, { audit }) {
+  const row = (label, value) =>
+    `<tr><td style="padding:4px 12px 4px 0;color:#555;vertical-align:top;white-space:nowrap">${escHtml(label)}</td><td style="padding:4px 0">${escHtml(value)}</td></tr>`;
+  const sigBlock = (label, name, cid) =>
+    `<div style="margin:16px 0"><div style="color:#555;font-size:13px">${escHtml(label)}</div>` +
+    `<img src="cid:${cid}" alt="Signature of ${escHtml(name)}" style="max-width:420px;width:100%;border:1px solid #ccc;background:#fff">` +
+    `<div style="font-size:14px">${escHtml(name)}</div></div>`;
+
+  const fields = [
+    ['Reference', r.reference],
+    ['Participant', r.participant_name],
+    ['Under 18', r.is_minor ? 'Yes' : 'No'],
+    ...(r.is_minor ? [['Parent / guardian', r.guardian_name]] : []),
+    ['Phone', r.phone],
+    ['Email', r.email || '(not provided)'],
+    ['Emergency contact', r.emergency_contact],
+    ['Signed', signedLabel(r.signed_at)],
+    ['Waiver version', r.waiver_version],
+    ...(audit ? [['IP address', r.ip], ['Device', r.user_agent], ['Waiver text SHA-256', r.waiver_sha256]] : []),
+  ];
+
+  const html = `<!doctype html><html><body style="font-family:Arial,Helvetica,sans-serif;color:#111;max-width:680px;margin:0 auto;padding:16px">
+<h1 style="font-size:20px;margin:0">${escHtml(WAIVER.title)}</h1>
+<h2 style="font-size:14px;margin:4px 0 16px;color:#444;text-transform:uppercase">${escHtml(WAIVER.subtitle)}</h2>
+<table style="font-size:14px;border-collapse:collapse;margin-bottom:16px">${fields.map(([l, v]) => row(l, v)).join('')}</table>
+<p style="font-size:13px;line-height:1.5">${waiverPara(WAIVER.intro)}</p>
+${WAIVER.sections.map((s) => `<h3 style="font-size:14px;margin:14px 0 4px;text-transform:uppercase">${escHtml(s.heading)}</h3><p style="font-size:13px;line-height:1.5;margin:0">${waiverPara(s.text)}</p>`).join('')}
+<h3 style="font-size:14px;margin:14px 0 4px;text-transform:uppercase">${escHtml(WAIVER.acknowledgment.heading)}</h3>
+<p style="font-size:13px;line-height:1.5;margin:0">${waiverPara(WAIVER.acknowledgment.text)}</p>
+<p style="font-size:13px;line-height:1.5"><em>${escHtml(WAIVER.esignConsent)}</em> Agreed.</p>
+${r.participant_signature ? sigBlock('Participant signature', r.participant_name, 'participant-signature') : ''}
+${r.is_minor ? sigBlock('Parent / legal guardian signature', r.guardian_name, 'guardian-signature') : ''}
+<p style="font-size:12px;color:#666;margin-top:24px">WFTX Events &middot; 8001 Jacksboro Hwy, Wichita Falls, TX 76310 &middot; ${escHtml(CONFIG.contactPhone)}</p>
+</body></html>`;
+
+  const text = [
+    `${WAIVER.title} - ${WAIVER.subtitle}`,
+    '',
+    ...fields.map(([l, v]) => `${l}: ${v}`),
+    '',
+    waiverPlain(WAIVER.intro),
+    ...WAIVER.sections.flatMap((s) => ['', s.heading.toUpperCase(), waiverPlain(s.text)]),
+    '',
+    WAIVER.acknowledgment.heading.toUpperCase(),
+    WAIVER.acknowledgment.text,
+    '',
+    `${WAIVER.esignConsent} Agreed.`,
+    '',
+    'Signature image(s) are included in the HTML version of this email.',
+  ].join('\n');
+
+  const attachments = [];
+  if (r.participant_signature) attachments.push({ filename: 'participant-signature.png', content: r.participant_signature, content_id: 'participant-signature' });
+  if (r.guardian_signature) attachments.push({ filename: 'guardian-signature.png', content: r.guardian_signature, content_id: 'guardian-signature' });
+
+  return { html, text, attachments };
+}
+
+async function sendWaiverEmails(env, r) {
+  const sends = [];
+  const subjectName = `${r.participant_name}${r.is_minor ? ' (minor)' : ''}`;
+  if (owners(env).length) {
+    sends.push(sendEmail(env, `waiver-owner-${r.id}`, {
+      to: owners(env),
+      reply_to: r.email || undefined,
+      subject: `Signed waiver: ${subjectName}, ${r.signed_date}`,
+      ...waiverEmail(r, { audit: true }),
+    }));
+  }
+  if (r.email_copy && r.email) {
+    sends.push(sendEmail(env, `waiver-guest-${r.id}`, {
+      to: [r.email],
+      subject: `Your signed waiver: WFTX Events Zombie Maze`,
+      ...waiverEmail(r, { audit: false }),
+    }));
+  }
+  await settle('waiver emails', sends);
+}
+
+async function adminListWaivers(env, date) {
+  const cols = `id, reference, participant_name, is_minor, guardian_name, phone, email, emergency_contact, signed_at, signed_date`;
+  const stmt = date
+    ? env.DB.prepare(`SELECT ${cols} FROM waivers WHERE signed_date = ? ORDER BY signed_at DESC`).bind(date)
+    : env.DB.prepare(`SELECT ${cols} FROM waivers ORDER BY signed_at DESC LIMIT 500`);
+  const { results } = await stmt.all();
+  return json({ waivers: results.map((r) => ({ ...r, signedLabel: signedLabel(r.signed_at) })) });
+}
+
+async function adminGetWaiver(env, id) {
+  const r = await env.DB.prepare(`SELECT * FROM waivers WHERE id = ?`).bind(id).first();
+  if (!r) return json({ error: 'Waiver not found.' }, 404);
+  return json({
+    waiver: {
+      ...r,
+      signedLabel: signedLabel(r.signed_at),
+      participant_signature: r.participant_signature ? `data:image/png;base64,${r.participant_signature}` : null,
+      guardian_signature: r.guardian_signature ? `data:image/png;base64,${r.guardian_signature}` : null,
+    },
+  });
 }
 
 // ---------- admin ----------

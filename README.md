@@ -11,6 +11,7 @@ Halloween attraction site for Wichita Falls, TX. Static front end on GitHub Page
 | DNS for wftxevents.com | Cloudflare (zone `74372e72…`) | `terraform/cloudflare-dns`, via `.github/workflows/terraform-cloudflare-dns.yml`; state in R2 bucket `wftxevents-tfstate` |
 | Booking API (`worker/`) | Cloudflare Worker `wftxevents-booking` + D1 `wftxevents-bookings` | `.github/workflows/deploy-worker.yml` on push to `worker/**` |
 | Admin view (`admin.html`) | GitHub Pages (`/admin.html`, noindex) | with the site |
+| Participant waiver (`waiver/`) | GitHub Pages (`/waiver`), signed records in D1 `waivers` | with the site + Worker |
 | AWS S3 + CloudFront backup (`terraform/aws-backup`) | not applied | manual `terraform apply` if ever wanted |
 
 Domain registration stays at Namecheap; only the nameservers point at Cloudflare
@@ -59,6 +60,25 @@ validation.
 Email goes through Resend from `bookings@wftxevents.com`, after the database write, so a mail or push
 failure never blocks a booking. Guest emails reply-to the staff addresses; staff alerts reply-to the guest. To change who's notified:
 `gh secret set BOOKING_NOTIFY_EMAILS --body "a@x.com,b@y.com"` then re-run the deploy-worker workflow.
+
+## Participant waiver
+
+`https://wftxevents.com/waiver` -- phone-friendly e-sign version of the paper waiver. QR codes for
+signage: `assets/waiver-qr.png` (print) and `assets/waiver-qr.svg` (scales to any size).
+
+- The waiver wording lives in exactly one place, `worker/src/waiver-text.js`; the page renders it from
+  `GET /api/waiver`. **If you change any wording, bump `WAIVER_VERSION`** -- open pages then refuse to
+  submit the old text and ask the guest to reload.
+- Each record stores the participant/guardian signatures (PNG), contact + emergency info, the waiver
+  version, a SHA-256 of the exact text signed, timestamp, IP and device (the e-signature audit trail).
+- Adults sign themselves. For under-18s a parent/guardian name + signature is required; the minor's
+  own signature is optional.
+- On submit the guest is asked whether they want an emailed copy. Every waiver emails a copy (full
+  text + inline signature images) to `BOOKING_NOTIFY_EMAILS`.
+- Records are viewable/printable on `/admin.html` under **Waivers** even if email fails.
+- Resend free plan: 100 emails/day, each recipient counts (UTC day = 7 PM-7 PM Central, so one
+  operating night falls in one day). Each waiver is 1-2 emails, so roughly 50+ waivers a night needs a
+  paid Resend plan. Over the cap, waivers still save; only the emails fail.
 
 ## Before this goes live
 

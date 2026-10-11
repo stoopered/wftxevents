@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script>if (location.protocol === 'http:' && !/^(localhost|127\.0\.0\.1)$/.test(location.hostname)) location.replace('https://' + location.host + location.pathname + location.search + location.hash);</script>
+<title>Participant Waiver | WFTX Events Zombie Maze</title>
+<meta name="description" content="Sign the WFTX Events Zombie Maze participant waiver from your phone before you arrive.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230b0906'/%3E%3Ccircle cx='11' cy='13' r='4' fill='%2339ff14'/%3E%3Ccircle cx='21' cy='13' r='4' fill='%2339ff14'/%3E%3Crect x='8' y='21' width='16' height='3' fill='%23b3221f'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Creepster&family=Special+Elite&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="../css/style.css">
+</head>
+<body>
+
+<header class="site-header">
+  <div class="wrap nav-inner">
+    <a class="logo" href="/">WFTX <span>EVENTS</span></a>
+    <a class="header-link" href="/">Back to site</a>
+  </div>
+</header>
+
+<main class="panel">
+  <div class="wrap narrow">
+    <h1 id="wTitle">Participant Waiver</h1>
+    <p class="waiver-subtitle" id="wSubtitle"></p>
+    <p>One waiver per person. A parent or legal guardian signs for anyone under 18. Takes about two minutes.</p>
+
+    <div class="waiver-text" id="waiverText"><p>Loading the waiver&hellip;</p></div>
+
+    <form id="waiverForm" class="booking-form" novalidate hidden>
+      <label>Participant full name
+        <input type="text" name="participantName" required maxlength="100" autocomplete="name">
+      </label>
+
+      <label class="check">
+        <input type="checkbox" name="isMinor" id="isMinor">
+        <span>Participant is under 18</span>
+      </label>
+
+      <div id="guardianFields" hidden>
+        <label>Parent / legal guardian full name
+          <input type="text" name="guardianName" maxlength="100" autocomplete="name">
+        </label>
+      </div>
+
+      <div class="field-row">
+        <label>Phone
+          <input type="tel" name="phone" required autocomplete="tel" inputmode="tel" placeholder="940-555-0123">
+        </label>
+        <label>Email <span class="hint">(optional, for your copy)</span>
+          <input type="email" name="email" autocomplete="email">
+        </label>
+      </div>
+
+      <label>Emergency contact <span class="hint">(name and phone)</span>
+        <input type="text" name="emergencyContact" required maxlength="150" placeholder="Jane Doe, 940-555-0199">
+      </label>
+
+      <p class="signed-date">Date: <span id="todayLabel"></span></p>
+
+      <div class="sig-wrap" id="participantSigWrap">
+        <span class="sig-label" id="participantSigLabel">Participant signature</span>
+        <canvas class="sig-pad" id="participantPad" aria-label="Participant signature pad"></canvas>
+        <div class="sig-actions"><span>Sign with your finger</span><button type="button" class="link-btn" data-clear="participantPad">Clear</button></div>
+      </div>
+
+      <div class="sig-wrap" id="guardianSigWrap" hidden>
+        <span class="sig-label">Parent / legal guardian signature</span>
+        <canvas class="sig-pad" id="guardianPad" aria-label="Parent or guardian signature pad"></canvas>
+        <div class="sig-actions"><span>Sign with your finger</span><button type="button" class="link-btn" data-clear="guardianPad">Clear</button></div>
+      </div>
+
+      <label class="check">
+        <input type="checkbox" name="consent" id="consent" required>
+        <span id="consentText">I have read and agree to this waiver.</span>
+      </label>
+
+      <div class="hp"><label>Website <input type="text" name="website" tabindex="-1" autocomplete="off"></label></div>
+
+      <button class="btn btn-primary" type="submit" id="signBtn">Sign Waiver</button>
+      <p class="form-msg" id="formMsg" role="alert" aria-live="polite"></p>
+    </form>
+
+    <div class="confirmation" id="done" hidden>
+      <h3>Waiver signed.</h3>
+      <p>Reference <strong id="doneRef"></strong></p>
+      <p id="doneDetails"></p>
+      <p id="doneEmail"></p>
+      <p class="fine-print">Show this screen at the entrance if asked. Signing for someone else in your group?</p>
+      <button class="btn btn-ghost" type="button" id="signAnother">Sign another waiver</button>
+    </div>
+  </div>
+</main>
+
+<dialog class="copy-dialog" id="copyDialog">
+  <h3>Want a copy?</h3>
+  <p>We can email you a copy of this signed waiver.</p>
+  <label>Email
+    <input type="email" id="copyEmail" autocomplete="email" inputmode="email">
+  </label>
+  <p class="form-msg" id="copyMsg" role="alert"></p>
+  <div class="dialog-actions">
+    <button type="button" class="btn btn-ghost" id="copyNo">No thanks</button>
+    <button type="button" class="btn btn-primary" id="copyYes">Email me a copy</button>
+  </div>
+</dialog>
+
+<footer>
+  <div class="wrap footer-inner">
+    <p class="logo">WFTX <span>EVENTS</span></p>
+    <p><a href="tel:+19403630500">940-363-0500</a> &middot; 8001 Jacksboro Hwy, Wichita Falls, TX 76310</p>
+  </div>
+</footer>
+
+<script src="waiver.js" defer></script>
+</body>
+</html>
