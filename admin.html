@@ -196,6 +196,9 @@ function showWaiver(w) {
     ['Email', w.email || '(not provided)'],
     ['Copy emailed to guest', w.email_copy ? 'Yes' : 'No'],
     ['Emergency contact', w.emergency_contact],
+    ...((w.signedTogetherWith || []).length
+      ? [['Signed together with', w.signedTogetherWith.map((p) => `${p.participant_name}${p.is_minor ? ' (minor)' : ''}, ref ${p.reference}`).join('; ')]]
+      : []),
     ['Signed', w.signedLabel],
     ['Waiver version', w.waiver_version],
     ['Waiver text SHA-256', w.waiver_sha256],

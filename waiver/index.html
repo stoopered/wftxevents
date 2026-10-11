@@ -30,18 +30,26 @@
     <div class="waiver-text" id="waiverText"><p>Loading the waiver&hellip;</p></div>
 
     <form id="waiverForm" class="booking-form" novalidate hidden>
-      <label>Participant full name
-        <input type="text" name="participantName" required maxlength="100" autocomplete="name">
-      </label>
-
       <label class="check">
         <input type="checkbox" name="isMinor" id="isMinor">
-        <span>Participant is under 18</span>
+        <span>I'm a parent or legal guardian signing for one or more children under 18</span>
       </label>
 
+      <div id="adultFields">
+        <label>Participant full name
+          <input type="text" name="participantName" maxlength="100" autocomplete="name">
+        </label>
+      </div>
+
       <div id="guardianFields" hidden>
-        <label>Parent / legal guardian full name
+        <label>Your full name <span class="hint">(parent / legal guardian)</span>
           <input type="text" name="guardianName" maxlength="100" autocomplete="name">
+        </label>
+        <div id="childList" class="child-list"></div>
+        <button type="button" class="btn btn-ghost btn-small" id="addChild">+ Add another child</button>
+        <label class="check">
+          <input type="checkbox" name="guardianIncluded" id="guardianIncluded">
+          <span>I'm also going through the maze. My signature below covers my own waiver too.</span>
         </label>
       </div>
 
@@ -67,7 +75,7 @@
       </div>
 
       <div class="sig-wrap" id="guardianSigWrap" hidden>
-        <span class="sig-label">Parent / legal guardian signature</span>
+        <span class="sig-label" id="guardianSigLabel">Parent / legal guardian signature</span>
         <canvas class="sig-pad" id="guardianPad" aria-label="Parent or guardian signature pad"></canvas>
         <div class="sig-actions"><span>Sign with your finger</span><button type="button" class="link-btn" data-clear="guardianPad">Clear</button></div>
       </div>
@@ -84,8 +92,8 @@
     </form>
 
     <div class="confirmation" id="done" hidden>
-      <h3>Waiver signed.</h3>
-      <p>Reference <strong id="doneRef"></strong></p>
+      <h3 id="doneTitle">Waiver signed.</h3>
+      <ul class="done-list" id="doneList"></ul>
       <p id="doneDetails"></p>
       <p id="doneEmail"></p>
       <p class="fine-print">Show this screen at the entrance if asked. Signing for someone else in your group?</p>

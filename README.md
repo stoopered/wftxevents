@@ -71,8 +71,10 @@ signage: `assets/waiver-qr.png` (print) and `assets/waiver-qr.svg` (scales to an
   submit the old text and ask the guest to reload.
 - Each record stores the participant/guardian signatures (PNG), contact + emergency info, the waiver
   version, a SHA-256 of the exact text signed, timestamp, IP and device (the e-signature audit trail).
-- Adults sign themselves. For under-18s a parent/guardian name + signature is required; the minor's
-  own signature is optional.
+- Adults sign themselves. A parent/guardian can sign once for up to 8 children ("+ Add another child"),
+  and tick "I'm also going through the maze" so the same signature also creates their own adult waiver.
+  Every person still gets their own row and reference code; rows signed together share a `group_id`, and
+  the admin detail view lists who else was on the same submission. One combined email per submission.
 - On submit the guest is asked whether they want an emailed copy. Every waiver emails a copy (full
   text + inline signature images) to `BOOKING_NOTIFY_EMAILS`.
 - Records are viewable/printable on `/admin.html` under **Waivers** even if email fails.

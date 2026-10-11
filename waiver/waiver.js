@@ -159,7 +159,8 @@ async function loadWaiver() {
     }
     heading(box, waiver.acknowledgment.heading);
     para(box, waiver.acknowledgment.text);
-    $('consentText').textContent = `I have read and agree to this waiver. ${waiver.esignConsent}`;
+    esignConsent = waiver.esignConsent;
+    updateConsent();
     form.hidden = false;
     resizePads();
   } catch {
@@ -170,17 +171,75 @@ async function loadWaiver() {
 
 $('todayLabel').textContent = new Date().toLocaleDateString('en-US', { timeZone: TIME_ZONE, dateStyle: 'long' });
 
-// ---------- minors ----------
+// ---------- children / family ----------
+
+const MAX_CHILDREN = 8;
+let esignConsent = '';
+const childList = $('childList');
+const addChildBtn = $('addChild');
+const guardianIncluded = $('guardianIncluded');
+const childInputs = () => [...childList.querySelectorAll('input')];
+
+function addChild(focus = false) {
+  if (childInputs().length >= MAX_CHILDREN) return;
+  const row = document.createElement('div');
+  row.className = 'child-row';
+  const label = document.createElement('label');
+  label.append(document.createTextNode(''));
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.maxLength = 100;
+  input.autocomplete = 'off';
+  label.append(input);
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'link-btn';
+  remove.textContent = 'Remove';
+  remove.addEventListener('click', () => {
+    row.remove();
+    syncChildren();
+  });
+  row.append(label, remove);
+  childList.append(row);
+  syncChildren();
+  if (focus) input.focus();
+}
+
+function syncChildren() {
+  const rows = [...childList.children];
+  rows.forEach((row, i) => {
+    row.querySelector('label').firstChild.textContent = rows.length > 1 ? `Child ${i + 1} full name` : "Child's full name";
+    row.querySelector('button').hidden = rows.length === 1;
+  });
+  addChildBtn.disabled = rows.length >= MAX_CHILDREN;
+  addChildBtn.textContent = rows.length >= MAX_CHILDREN ? `Up to ${MAX_CHILDREN} children per waiver` : '+ Add another child';
+  updateConsent();
+}
+
+function updateConsent() {
+  const minor = isMinor.checked;
+  const n = childInputs().length;
+  const self = guardianIncluded.checked;
+  $('consentText').textContent = minor
+    ? `I am the parent or legal guardian of ${n === 1 ? 'the child' : 'each child'} listed above. I have read this waiver and agree to it on their behalf${self ? ' and for myself' : ''}. ${esignConsent}`
+    : `I have read and agree to this waiver. ${esignConsent}`;
+  const kids = n === 1 ? 'your child' : n === 2 ? 'both children' : `all ${n} children`;
+  $('guardianSigLabel').textContent = `Parent / legal guardian signature (for ${kids}${self ? ' and yourself' : ''})`;
+}
 
 function syncMinor() {
   const minor = isMinor.checked;
+  $('adultFields').hidden = minor;
   $('guardianFields').hidden = !minor;
+  $('participantSigWrap').hidden = minor;
   $('guardianSigWrap').hidden = !minor;
-  form.elements.guardianName.required = minor;
-  $('participantSigLabel').textContent = minor ? 'Participant signature (optional for under 18)' : 'Participant signature';
+  if (minor && !childInputs().length) addChild();
+  updateConsent();
   resizePads();
 }
 isMinor.addEventListener('change', syncMinor);
+addChildBtn.addEventListener('click', () => addChild(true));
+guardianIncluded.addEventListener('change', updateConsent);
 
 // ---------- submit ----------
 
@@ -196,13 +255,16 @@ function setMsg(text) {
 function validate() {
   const f = form.elements;
   const minor = isMinor.checked;
-  if (f.participantName.value.trim().length < 2) return "Please enter the participant's full name.";
-  if (minor && f.guardianName.value.trim().length < 2) return "Please enter the parent or guardian's full name.";
+  if (minor) {
+    if (f.guardianName.value.trim().length < 2) return 'Please enter your full name (parent or legal guardian).';
+    if (childInputs().some((i) => i.value.trim().length < 2)) return "Please enter each child's full name, or remove the empty entry.";
+  } else if (f.participantName.value.trim().length < 2) {
+    return "Please enter the participant's full name.";
+  }
   if (f.phone.value.replace(/[^\d]/g, '').length < 10) return 'Please enter a valid phone number.';
   if (f.email.value.trim() && !f.email.checkValidity()) return 'Please enter a valid email, or leave it blank.';
   if (f.emergencyContact.value.trim().length < 3) return 'Please enter an emergency contact.';
-  if (minor && pads.guardianPad.isEmpty()) return 'A parent or legal guardian must sign for participants under 18.';
-  if (!minor && pads.participantPad.isEmpty()) return 'Please sign in the signature box.';
+  if ((minor ? pads.guardianPad : pads.participantPad).isEmpty()) return 'Please sign in the signature box.';
   if (!f.consent.checked) return 'Please check the box to agree to the waiver.';
   return null;
 }
@@ -245,14 +307,16 @@ form.addEventListener('submit', async (e) => {
   const minor = isMinor.checked;
   const payload = {
     waiverVersion,
-    participantName: f.participantName.value,
     isMinor: minor,
+    participantName: minor ? '' : f.participantName.value,
+    children: minor ? childInputs().map((i) => i.value.trim()) : [],
     guardianName: minor ? f.guardianName.value : '',
+    guardianIncluded: minor && guardianIncluded.checked,
     phone: f.phone.value,
     email,
     emailCopy,
     emergencyContact: f.emergencyContact.value,
-    participantSignature: pads.participantPad.isEmpty() ? null : pads.participantPad.toPNG(),
+    participantSignature: minor ? null : pads.participantPad.toPNG(),
     guardianSignature: minor ? pads.guardianPad.toPNG() : null,
     consent: f.consent.checked,
     website: f.website.value,
@@ -269,8 +333,18 @@ form.addEventListener('submit', async (e) => {
     const data = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(data.error || `Something went wrong (${res.status}). Please try again.`);
 
-    $('doneRef').textContent = data.reference;
-    $('doneDetails').textContent = `${payload.participantName.trim()}${minor ? ` (signed by ${payload.guardianName.trim()})` : ''}, signed ${data.signedLabel}.`;
+    const list = $('doneList');
+    list.textContent = '';
+    for (const p of data.participants) {
+      const li = document.createElement('li');
+      li.append(`${p.name}${p.isMinor ? ' (under 18)' : ''}: ref`);
+      const ref = document.createElement('strong');
+      ref.textContent = p.reference;
+      li.append(ref);
+      list.append(li);
+    }
+    $('doneTitle').textContent = data.participants.length > 1 ? `${data.participants.length} waivers signed.` : 'Waiver signed.';
+    $('doneDetails').textContent = `Signed ${data.signedLabel}${minor ? ` by ${payload.guardianName.trim()}, parent / legal guardian` : ''}.`;
     $('doneEmail').textContent = data.emailCopy ? `A copy is on its way to ${email}.` : '';
     form.hidden = true;
     $('done').hidden = false;
@@ -287,6 +361,10 @@ form.addEventListener('submit', async (e) => {
 $('signAnother').addEventListener('click', () => {
   const f = form.elements;
   f.participantName.value = '';
+  childList.textContent = '';
+  if (isMinor.checked) addChild();
+  guardianIncluded.checked = false; // their own waiver is already done
+  updateConsent();
   f.consent.checked = false;
   pads.participantPad.clear();
   pads.guardianPad.clear();

@@ -211,6 +211,15 @@ footer { border-top: 1px solid var(--border); padding: 40px 0; text-align: cente
 .sig-actions { display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; color: var(--text-dim); }
 .link-btn { background: none; border: none; color: var(--glow); font: inherit; cursor: pointer; padding: 4px 0; text-decoration: underline; }
 .signed-date { color: var(--text); }
+.child-list { display: grid; gap: 12px; margin: 14px 0 10px; }
+.child-row { display: flex; gap: 10px; align-items: flex-end; }
+.child-row label { flex: 1; }
+.btn-small { padding: 8px 14px; font-size: 0.9rem; justify-self: start; }
+.btn-small:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+#guardianFields { display: grid; gap: 14px; }
+.done-list { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 6px; }
+.done-list li { color: var(--text); }
+.done-list strong { color: var(--glow); letter-spacing: 2px; margin-left: 6px; }
 dialog.copy-dialog {
   background: var(--bg-alt);
   color: var(--text);
