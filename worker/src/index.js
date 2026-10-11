@@ -286,6 +286,7 @@ async function sendEmail(env, idempotencyKey, { to, subject, text, html, attachm
 const MAX_SIGNATURE_BYTES = 300 * 1024;
 // High on purpose: a family on venue Wi-Fi shares one IP and signs several in a row.
 const MAX_WAIVERS_PER_IP_PER_HOUR = 60;
+const MAX_CHILDREN = 8;
 
 let waiverHashCache;
 async function waiverHash() {
@@ -322,49 +323,53 @@ async function createWaiver(request, env, ctx) {
   }
 
   const oneLine = (v, max) => (str(v, max) || '').replace(/[\r\n\t]+/g, ' ').trim() || null;
-  const participantName = oneLine(body.participantName, 100);
   const isMinor = body.isMinor === true;
+  const participantName = isMinor ? null : oneLine(body.participantName, 100);
+  // Older cached pages send a single minor as participantName; treat it as a one-child list.
+  const rawChildren = Array.isArray(body.children) ? body.children : isMinor && body.participantName ? [body.participantName] : [];
+  const children = isMinor ? rawChildren.slice(0, MAX_CHILDREN + 1).map((c) => oneLine(c, 100)) : [];
   const guardianName = isMinor ? oneLine(body.guardianName, 100) : null;
+  const guardianIncluded = isMinor && body.guardianIncluded === true;
   const phone = (str(body.phone, 30) || '').replace(/[^\d+]/g, '');
   const email = str(body.email, 120);
   const emailCopy = body.emailCopy === true;
   const emergencyContact = oneLine(body.emergencyContact, 150);
-  const participantSig = body.participantSignature ? parseSignature(body.participantSignature) : null;
+  const participantSig = !isMinor && body.participantSignature ? parseSignature(body.participantSignature) : null;
   const guardianSig = isMinor && body.guardianSignature ? parseSignature(body.guardianSignature) : null;
 
   const errors = [];
-  if (!participantName || participantName.length < 2) errors.push("Please enter the participant's full name.");
+  if (isMinor) {
+    if (!guardianName || guardianName.length < 2) errors.push('Please enter your full name (parent or legal guardian).');
+    if (!children.length) errors.push("Please enter each child's full name.");
+    else if (children.length > MAX_CHILDREN) errors.push(`Up to ${MAX_CHILDREN} children per waiver. Please submit another for the rest.`);
+    else if (children.some((c) => !c || c.length < 2)) errors.push("Please enter each child's full name, or remove the empty entry.");
+    if (!guardianSig) errors.push('Please sign in the parent / legal guardian signature box.');
+  } else {
+    if (!participantName || participantName.length < 2) errors.push("Please enter the participant's full name.");
+    if (body.participantSignature && !participantSig) errors.push('The signature could not be read. Clear it and sign again.');
+    else if (!participantSig) errors.push('Please sign in the signature box.');
+  }
   if (!/^\+?\d{10,15}$/.test(phone)) errors.push('Please enter a valid phone number.');
   if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.push('Please enter a valid email, or leave it blank.');
   if (emailCopy && !email) errors.push('Enter an email address to get a copy.');
   if (!emergencyContact || emergencyContact.length < 3) errors.push('Please enter an emergency contact.');
   if (body.consent !== true) errors.push('Please check the box to agree to the waiver and sign electronically.');
-  if (body.participantSignature && !participantSig) errors.push('The participant signature could not be read. Clear it and sign again.');
-  if (isMinor) {
-    if (!guardianName || guardianName.length < 2) errors.push("Please enter the parent or guardian's full name.");
-    if (!guardianSig) errors.push('A parent or legal guardian must sign for participants under 18.');
-  } else if (!participantSig) {
-    errors.push('Please sign in the signature box.');
-  }
   if (errors.length) return json({ error: errors.join(' ') }, 400);
 
   const ip = request.headers.get('CF-Connecting-IP') || '';
   const now = Math.floor(Date.now() / 1000);
-  const recent = await env.DB.prepare(`SELECT COUNT(*) AS n FROM waivers WHERE ip = ? AND created_at > ?`).bind(ip, now - 3600).first('n');
+  // Counts submissions, not people, so one big family doesn't trip the limit.
+  const recent = await env.DB.prepare(
+    `SELECT COUNT(DISTINCT COALESCE(group_id, id)) AS n FROM waivers WHERE ip = ? AND created_at > ?`,
+  ).bind(ip, now - 3600).first('n');
   if (recent >= MAX_WAIVERS_PER_IP_PER_HOUR) return json({ error: 'Too many submissions. Please try again later.' }, 429);
 
-  const record = {
-    id: crypto.randomUUID(),
-    reference: confirmationCode(),
-    participant_name: participantName,
-    is_minor: isMinor ? 1 : 0,
-    guardian_name: guardianName,
+  const groupId = crypto.randomUUID();
+  const shared = {
     phone,
     email,
     email_copy: emailCopy ? 1 : 0,
     emergency_contact: emergencyContact,
-    participant_signature: participantSig,
-    guardian_signature: guardianSig,
     waiver_version: WAIVER_VERSION,
     waiver_sha256: await waiverHash(),
     signed_at: now,
@@ -372,15 +377,35 @@ async function createWaiver(request, env, ctx) {
     ip,
     user_agent: (request.headers.get('User-Agent') || '').slice(0, 300),
     created_at: now,
+    group_id: groupId,
+    guardian_included: guardianIncluded ? 1 : 0,
   };
-  const cols = Object.keys(record);
-  await env.DB.prepare(`INSERT INTO waivers (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`)
-    .bind(...cols.map((c) => record[c]))
-    .run();
+  const person = (fields) => ({ id: crypto.randomUUID(), reference: confirmationCode(), ...shared, ...fields });
 
-  ctx.waitUntil(sendWaiverEmails(env, record));
+  const records = isMinor
+    ? [
+        // The parent's own waiver uses the same signature they gave for the children.
+        ...(guardianIncluded ? [person({ participant_name: guardianName, is_minor: 0, guardian_name: null, participant_signature: guardianSig, guardian_signature: null })] : []),
+        ...children.map((c) => person({ participant_name: c, is_minor: 1, guardian_name: guardianName, participant_signature: null, guardian_signature: guardianSig })),
+      ]
+    : [person({ participant_name: participantName, is_minor: 0, guardian_name: null, participant_signature: participantSig, guardian_signature: null })];
 
-  return json({ ok: true, reference: record.reference, signedLabel: signedLabel(record.signed_at), emailCopy: emailCopy && !!email }, 201);
+  const cols = Object.keys(records[0]);
+  const insert = `INSERT INTO waivers (${cols.join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`;
+  await env.DB.batch(records.map((r) => env.DB.prepare(insert).bind(...cols.map((c) => r[c])))); // atomic
+
+  const submission = {
+    ...shared,
+    isMinor,
+    guardianName,
+    guardianIncluded,
+    participantSig,
+    guardianSig,
+    people: records.map((r) => ({ name: r.participant_name, reference: r.reference, isMinor: !!r.is_minor })),
+  };
+  ctx.waitUntil(sendWaiverEmails(env, submission));
+
+  return json({ ok: true, signedLabel: signedLabel(now), emailCopy: emailCopy && !!email, participants: submission.people }, 201);
 }
 
 function signedLabel(unix) {
@@ -391,80 +416,92 @@ const escHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;
 const waiverPara = (s) => escHtml(s).replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
 const waiverPlain = (s) => s.replace(/\*\*(.+?)\*\*/g, '$1');
 
-function waiverEmail(r, { audit }) {
+function waiverEmail(s, { audit }) {
   const row = (label, value) =>
-    `<tr><td style="padding:4px 12px 4px 0;color:#555;vertical-align:top;white-space:nowrap">${escHtml(label)}</td><td style="padding:4px 0">${escHtml(value)}</td></tr>`;
+    `<tr><td style="padding:4px 12px 4px 0;color:#555;vertical-align:top;white-space:nowrap">${escHtml(label)}</td><td style="padding:4px 0">${value}</td></tr>`;
   const sigBlock = (label, name, cid) =>
     `<div style="margin:16px 0"><div style="color:#555;font-size:13px">${escHtml(label)}</div>` +
     `<img src="cid:${cid}" alt="Signature of ${escHtml(name)}" style="max-width:420px;width:100%;border:1px solid #ccc;background:#fff">` +
     `<div style="font-size:14px">${escHtml(name)}</div></div>`;
 
+  const peopleText = s.people.map((p) => `${p.name}${p.isMinor ? ' (under 18)' : ''} - ref ${p.reference}`);
+  const signedFor = s.isMinor
+    ? `${s.guardianName}, parent / legal guardian, for each child listed${s.guardianIncluded ? ' and for themselves' : ''}`
+    : s.people[0].name;
   const fields = [
-    ['Reference', r.reference],
-    ['Participant', r.participant_name],
-    ['Under 18', r.is_minor ? 'Yes' : 'No'],
-    ...(r.is_minor ? [['Parent / guardian', r.guardian_name]] : []),
-    ['Phone', r.phone],
-    ['Email', r.email || '(not provided)'],
-    ['Emergency contact', r.emergency_contact],
-    ['Signed', signedLabel(r.signed_at)],
-    ['Waiver version', r.waiver_version],
-    ...(audit ? [['IP address', r.ip], ['Device', r.user_agent], ['Waiver text SHA-256', r.waiver_sha256]] : []),
+    ['Participants', peopleText.map(escHtml).join('<br>')],
+    ['Signed by', escHtml(signedFor)],
+    ['Phone', escHtml(s.phone)],
+    ['Email', escHtml(s.email || '(not provided)')],
+    ['Emergency contact', escHtml(s.emergency_contact)],
+    ['Signed', escHtml(signedLabel(s.signed_at))],
+    ['Waiver version', escHtml(s.waiver_version)],
+    ...(audit ? [['IP address', escHtml(s.ip)], ['Device', escHtml(s.user_agent)], ['Waiver text SHA-256', escHtml(s.waiver_sha256)]] : []),
   ];
+  const sigLabel = s.isMinor
+    ? `Parent / legal guardian signature (for each child listed${s.guardianIncluded ? ' and for themselves' : ''})`
+    : 'Participant signature';
+  const sigName = s.isMinor ? s.guardianName : s.people[0].name;
+  const sigCid = s.isMinor ? 'guardian-signature' : 'participant-signature';
 
   const html = `<!doctype html><html><body style="font-family:Arial,Helvetica,sans-serif;color:#111;max-width:680px;margin:0 auto;padding:16px">
 <h1 style="font-size:20px;margin:0">${escHtml(WAIVER.title)}</h1>
 <h2 style="font-size:14px;margin:4px 0 16px;color:#444;text-transform:uppercase">${escHtml(WAIVER.subtitle)}</h2>
 <table style="font-size:14px;border-collapse:collapse;margin-bottom:16px">${fields.map(([l, v]) => row(l, v)).join('')}</table>
 <p style="font-size:13px;line-height:1.5">${waiverPara(WAIVER.intro)}</p>
-${WAIVER.sections.map((s) => `<h3 style="font-size:14px;margin:14px 0 4px;text-transform:uppercase">${escHtml(s.heading)}</h3><p style="font-size:13px;line-height:1.5;margin:0">${waiverPara(s.text)}</p>`).join('')}
+${WAIVER.sections.map((x) => `<h3 style="font-size:14px;margin:14px 0 4px;text-transform:uppercase">${escHtml(x.heading)}</h3><p style="font-size:13px;line-height:1.5;margin:0">${waiverPara(x.text)}</p>`).join('')}
 <h3 style="font-size:14px;margin:14px 0 4px;text-transform:uppercase">${escHtml(WAIVER.acknowledgment.heading)}</h3>
 <p style="font-size:13px;line-height:1.5;margin:0">${waiverPara(WAIVER.acknowledgment.text)}</p>
 <p style="font-size:13px;line-height:1.5"><em>${escHtml(WAIVER.esignConsent)}</em> Agreed.</p>
-${r.participant_signature ? sigBlock('Participant signature', r.participant_name, 'participant-signature') : ''}
-${r.is_minor ? sigBlock('Parent / legal guardian signature', r.guardian_name, 'guardian-signature') : ''}
+${sigBlock(sigLabel, sigName, sigCid)}
 <p style="font-size:12px;color:#666;margin-top:24px">WFTX Events &middot; 8001 Jacksboro Hwy, Wichita Falls, TX 76310 &middot; ${escHtml(CONFIG.contactPhone)}</p>
 </body></html>`;
 
   const text = [
     `${WAIVER.title} - ${WAIVER.subtitle}`,
     '',
-    ...fields.map(([l, v]) => `${l}: ${v}`),
+    'Participants:',
+    ...peopleText.map((p) => `  ${p}`),
+    `Signed by: ${signedFor}`,
+    `Phone: ${s.phone}`,
+    `Email: ${s.email || '(not provided)'}`,
+    `Emergency contact: ${s.emergency_contact}`,
+    `Signed: ${signedLabel(s.signed_at)}`,
+    `Waiver version: ${s.waiver_version}`,
+    ...(audit ? [`IP address: ${s.ip}`, `Device: ${s.user_agent}`, `Waiver text SHA-256: ${s.waiver_sha256}`] : []),
     '',
     waiverPlain(WAIVER.intro),
-    ...WAIVER.sections.flatMap((s) => ['', s.heading.toUpperCase(), waiverPlain(s.text)]),
+    ...WAIVER.sections.flatMap((x) => ['', x.heading.toUpperCase(), waiverPlain(x.text)]),
     '',
     WAIVER.acknowledgment.heading.toUpperCase(),
     WAIVER.acknowledgment.text,
     '',
     `${WAIVER.esignConsent} Agreed.`,
     '',
-    'Signature image(s) are included in the HTML version of this email.',
+    'The signature image is included in the HTML version of this email.',
   ].join('\n');
 
-  const attachments = [];
-  if (r.participant_signature) attachments.push({ filename: 'participant-signature.png', content: r.participant_signature, content_id: 'participant-signature' });
-  if (r.guardian_signature) attachments.push({ filename: 'guardian-signature.png', content: r.guardian_signature, content_id: 'guardian-signature' });
-
-  return { html, text, attachments };
+  const sig = s.isMinor ? s.guardianSig : s.participantSig;
+  return { html, text, attachments: [{ filename: `${sigCid}.png`, content: sig, content_id: sigCid }] };
 }
 
-async function sendWaiverEmails(env, r) {
+async function sendWaiverEmails(env, s) {
+  const names = s.people.map((p) => p.name);
+  const who = names.length <= 3 ? names.join(', ') : `${names.slice(0, 2).join(', ')} + ${names.length - 2} more`;
   const sends = [];
-  const subjectName = `${r.participant_name}${r.is_minor ? ' (minor)' : ''}`;
   if (owners(env).length) {
-    sends.push(sendEmail(env, `waiver-owner-${r.id}`, {
+    sends.push(sendEmail(env, `waiver-owner-${s.group_id}`, {
       to: owners(env),
-      reply_to: r.email || undefined,
-      subject: `Signed waiver: ${subjectName}, ${r.signed_date}`,
-      ...waiverEmail(r, { audit: true }),
+      reply_to: s.email || undefined,
+      subject: `Signed waiver${names.length > 1 ? 's' : ''}: ${who}, ${s.signed_date}`,
+      ...waiverEmail(s, { audit: true }),
     }));
   }
-  if (r.email_copy && r.email) {
-    sends.push(sendEmail(env, `waiver-guest-${r.id}`, {
-      to: [r.email],
-      subject: `Your signed waiver: WFTX Events Zombie Maze`,
-      ...waiverEmail(r, { audit: false }),
+  if (s.email_copy && s.email) {
+    sends.push(sendEmail(env, `waiver-guest-${s.group_id}`, {
+      to: [s.email],
+      subject: `Your signed waiver${names.length > 1 ? 's' : ''}: WFTX Events Zombie Maze`,
+      ...waiverEmail(s, { audit: false }),
     }));
   }
   await settle('waiver emails', sends);
@@ -482,9 +519,13 @@ async function adminListWaivers(env, date) {
 async function adminGetWaiver(env, id) {
   const r = await env.DB.prepare(`SELECT * FROM waivers WHERE id = ?`).bind(id).first();
   if (!r) return json({ error: 'Waiver not found.' }, 404);
+  const group = r.group_id
+    ? (await env.DB.prepare(`SELECT participant_name, reference, is_minor FROM waivers WHERE group_id = ? AND id != ? ORDER BY is_minor, participant_name`).bind(r.group_id, r.id).all()).results
+    : [];
   return json({
     waiver: {
       ...r,
+      signedTogetherWith: group,
       signedLabel: signedLabel(r.signed_at),
       participant_signature: r.participant_signature ? `data:image/png;base64,${r.participant_signature}` : null,
       guardian_signature: r.guardian_signature ? `data:image/png;base64,${r.guardian_signature}` : null,
